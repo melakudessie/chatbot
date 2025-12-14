@@ -9,7 +9,7 @@ import numpy as np
 from openai import OpenAI
 
 try:
-    import faiss
+    import faiss  # faiss-cpu
 except Exception:
     faiss = None
 
@@ -26,26 +26,35 @@ DEFAULT_PDF_PATH: str = "WHOAMR.pdf"
 EMBED_MODEL: str = "text-embedding-3-small"
 CHAT_MODEL: str = "gpt-4o-mini"
 
+STEWARD_FOOTER: str = (
+    "Stewardship note: use the narrowest effective antibiotic; reassess at 48 to 72 hours; "
+    "follow local guidance and clinical judgment."
+)
 
 WHO_SYSTEM_PROMPT: str = """
 You are WHO Antibiotic Guide; AWaRe Clinical Assistant.
 
 Purpose: support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
 
-Scope: management of common infections; empiric antibiotic treatment at first presentation; when a no antibiotic approach is appropriate; choice of antibiotics; dosage; route; frequency; treatment duration; adults and children.
+Scope: common infections; empiric treatment at first presentation; when a no antibiotic approach is appropriate; antibiotic choice; dosage; route; frequency; duration; adults and children.
 
-Safety:
-1: Do not diagnose; do not replace clinical judgement; do not replace local or national guidelines.
-2: If the answer is not explicitly supported by the provided context; say: "Not found in the WHO AWaRe book context provided."
-3: Prefer a no antibiotic approach when the context indicates it.
-4: When mentioning antibiotics; include dose; route; frequency; and duration if present.
-5: Keep output concise; add a short reminder to follow local guidance and clinical judgment.
+Safety rules:
+1: Use ONLY the provided WHO context; do not use outside knowledge.
+2: If the answer is not explicitly supported by the context; say: "Not found in the WHO AWaRe book context provided."
+3: Only recommend a "no antibiotic approach" if the retrieved WHO context explicitly states antibiotics are not needed; not recommended; should be avoided; or similar.
+4: Do not diagnose; do not replace clinical judgment; do not replace local or national guidelines.
 
-Output format:
-A: Answer
-B: Dosing and duration
-C: When no antibiotics are appropriate
-D: Sources; page numbers; short excerpts
+Formatting rules:
+A: Answer; one short paragraph.
+B: Dosing and duration; bullet points; include mg/kg; route; frequency; duration if present.
+C: No antibiotic guidance; either:
+   - "No antibiotic approach is appropriate" with the WHO justification; OR
+   - "Antibiotics are recommended" if WHO indicates antibiotics are needed; OR
+   - "Not found in the WHO AWaRe book context provided."
+D: Sources; page numbers; short excerpts.
+
+Always end with this line:
+Stewardship note: use the narrowest effective antibiotic; reassess at 48 to 72 hours; follow local guidance and clinical judgment.
 """.strip()
 
 
@@ -64,11 +73,30 @@ if faiss is None:
     st.error("Dependency missing: faiss. Add faiss-cpu to requirements.txt.")
 
 
+def ensure_footer(text: str) -> str:
+    if not text:
+        return STEWARD_FOOTER
+    if STEWARD_FOOTER.lower() in text.lower():
+        return text
+    return (text.rstrip() + "\n\n" + STEWARD_FOOTER).strip()
+
+
 def _clean_text(s: str) -> str:
     s = s.replace("\x00", " ")
+    s = s.replace("\u00a0", " ")
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
+
+    s = re.sub(r"\s*mg\s*/\s*kg\s*/\s*day", " mg/kg/day", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s*mg\s*/\s*kg\s*/\s*dose", " mg/kg/dose", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s*IV\s*/\s*IM", " IV/IM", s, flags=re.IGNORECASE)
+
     return s.strip()
+
+
+def _read_pdf_bytes_from_path(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def _read_pdf_pages_from_bytes(pdf_bytes: bytes) -> List[Dict]:
@@ -80,11 +108,6 @@ def _read_pdf_pages_from_bytes(pdf_bytes: bytes) -> List[Dict]:
         text = _clean_text(text)
         pages.append({"page": i + 1, "text": text})
     return pages
-
-
-def _read_pdf_bytes_from_path(path: str) -> bytes:
-    with open(path, "rb") as f:
-        return f.read()
 
 
 def _chunk_pages(pages: List[Dict], chunk_size_chars: int, chunk_overlap_chars: int) -> List[Dict]:
@@ -176,24 +199,18 @@ Write the answer following the required output format.
 
 def _extract_openai_key(raw: Optional[str]) -> str:
     """
-    Fixes UnicodeEncodeError by extracting a valid ASCII key token.
-    Accepts: sk-... or sk-proj-...
-    Returns empty string if invalid.
+    Extract a valid ASCII key token from secrets or input.
+    Prevents UnicodeEncodeError caused by emojis or extra characters in the secret.
     """
     if not raw:
         return ""
 
-    raw = raw.strip()
+    raw = raw.strip().strip('"').strip("'").strip()
 
-    # Remove obvious wrapping quotes
-    raw = raw.strip('"').strip("'").strip()
-
-    # Extract the first plausible OpenAI key substring
     m = re.search(r"(sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9_\-]{20,})", raw)
     if m:
         return m.group(1)
 
-    # If nothing matched; last attempt: keep only ASCII printable and retry
     ascii_only = raw.encode("ascii", errors="ignore").decode("ascii", errors="ignore")
     m2 = re.search(r"(sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9_\-]{20,})", ascii_only)
     if m2:
@@ -202,7 +219,7 @@ def _extract_openai_key(raw: Optional[str]) -> str:
     return ""
 
 
-def _get_openai_key() -> str:
+def _get_openai_key_from_secrets_or_env() -> str:
     key = ""
     try:
         key = st.secrets.get("OPENAI_API_KEY", "")
@@ -232,14 +249,14 @@ def build_retriever(pdf_cache_key: str, pdf_bytes: bytes, chunk_size: int, chunk
     if faiss is None:
         raise RuntimeError("faiss is not available.")
     if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY missing or invalid. Remove emojis or extra text; keep only sk-...")
+        raise RuntimeError("OPENAI_API_KEY missing or invalid. Use only sk-... in Streamlit Secrets.")
 
     client = OpenAI(api_key=openai_api_key)
 
     pages = _read_pdf_pages_from_bytes(pdf_bytes)
     chunks = _chunk_pages(pages, chunk_size, chunk_overlap)
     if not chunks:
-        raise RuntimeError("No text extracted from PDF. If this PDF is scanned, use a text-based PDF or add OCR.")
+        raise RuntimeError("No text extracted from PDF. If the PDF is scanned, use a text based version or add OCR.")
 
     vectors = _embed_texts(client, [c["text"] for c in chunks])
     index = _build_index(vectors)
@@ -257,12 +274,12 @@ with st.sidebar:
     if use_manual:
         manual_raw = st.text_input("OpenAI API Key", type="password")
 
-    openai_api_key = _extract_openai_key(manual_raw) if manual_raw else _get_openai_key()
+    openai_api_key = _extract_openai_key(manual_raw) if manual_raw else _get_openai_key_from_secrets_or_env()
 
     if openai_api_key:
-        st.success("API key valid; emojis and extra characters removed if present.")
+        st.success("API key valid.")
     else:
-        st.warning("API key not found or invalid. In Streamlit Secrets use: OPENAI_API_KEY = \"sk-...\" only.")
+        st.warning('API key not found or invalid. In Streamlit Secrets use: OPENAI_API_KEY = "sk-..."')
 
     st.divider()
 
@@ -280,12 +297,13 @@ with st.sidebar:
     st.divider()
 
     temperature = st.slider("Temperature", min_value=0.0, max_value=0.6, value=0.0, step=0.1)
-    debug = st.toggle("Debug mode; show full errors", value=True)
+    debug = st.toggle("Debug mode; show full errors", value=False)
 
     st.divider()
+
     st.subheader("Disclaimer")
     st.write(
-        "Decision-support tool based on WHO AWaRe content provided. "
+        "Decision support tool based on WHO AWaRe content provided. "
         "Does not replace clinical judgment or local and national prescribing guidelines."
     )
 
@@ -365,18 +383,20 @@ with left:
                 )
 
                 if not hits:
-                    msg = "Not found in the WHO AWaRe book context provided."
+                    msg = ensure_footer("Not found in the WHO AWaRe book context provided.")
                     st.write(msg)
                     st.session_state.messages.append({"role": "assistant", "content": msg})
                 else:
                     stream = _stream_answer(client, question, hits, float(temperature))
                     answer_text = st.write_stream(stream)
+                    answer_text = ensure_footer(answer_text)
                     st.session_state.messages.append({"role": "assistant", "content": answer_text})
 
                     with st.expander("Retrieved sources; excerpts with page numbers"):
                         for i, h in enumerate(hits, start=1):
                             st.markdown(f"Source {i}; page {h['page']}; similarity {h['score']:.3f}")
-                            st.write(h["text"][:1500] + (" ..." if len(h["text"]) > 1500 else ""))
+                            excerpt = h["text"][:900]
+                            st.write(excerpt + (" ..." if len(h["text"]) > 900 else ""))
 
             except Exception as e:
                 if debug:
