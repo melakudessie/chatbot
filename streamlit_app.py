@@ -1,5 +1,6 @@
 import os
 import re
+import io
 from typing import List, Dict, Tuple, Optional
 
 import streamlit as st
@@ -72,7 +73,10 @@ def _clean_text(s: str) -> str:
 
 
 def _read_pdf_pages_from_bytes(pdf_bytes: bytes) -> List[Dict]:
-    reader = PdfReader(pdf_bytes)
+    # FIX: wrap bytes in BytesIO so PdfReader can seek
+    bio = io.BytesIO(pdf_bytes)
+    reader = PdfReader(bio)
+
     pages = []
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
@@ -192,9 +196,6 @@ def _get_openai_key() -> Optional[str]:
 
 
 def _get_pdf_bytes(local_path: str, uploaded_file) -> Tuple[str, Optional[bytes], str]:
-    """
-    Returns: cache_key; bytes or None; status message
-    """
     if uploaded_file is not None:
         data = uploaded_file.getvalue()
         if not data:
@@ -219,10 +220,6 @@ def build_retriever(
     chunk_overlap: int,
     openai_api_key: str,
 ) -> Dict:
-    """
-    Cached: creates chunks; embeddings; FAISS index.
-    Cache invalidates if pdf_cache_key changes; or chunk settings change.
-    """
     if PdfReader is None:
         raise RuntimeError("pypdf is not available.")
     if faiss is None:
@@ -235,7 +232,7 @@ def build_retriever(
     pages = _read_pdf_pages_from_bytes(pdf_bytes)
     chunks = _chunk_pages(pages, chunk_size, chunk_overlap)
     if not chunks:
-        raise RuntimeError("No text extracted from PDF; the PDF may be scanned or protected.")
+        raise RuntimeError("No text extracted from PDF. If this is a scanned PDF, use a text-based PDF or add OCR.")
 
     vectors = _embed_texts(client, [c["text"] for c in chunks])
     index = _build_index(vectors)
@@ -246,45 +243,32 @@ def build_retriever(
 with st.sidebar:
     st.header("Configuration")
 
-    st.markdown("Keys")
-    key_source = "none"
-    if _get_openai_key():
-        key_source = "secrets or environment"
-
     use_manual = st.toggle("Enter API key manually", value=False)
     manual_key = st.text_input("OpenAI API Key", type="password") if use_manual else ""
     openai_api_key = manual_key.strip() or _get_openai_key() or ""
 
     if openai_api_key:
-        st.success(f"API key detected; source: {'manual' if manual_key.strip() else key_source}")
+        st.success("API key detected.")
     else:
         st.warning("No API key found. Add OPENAI_API_KEY in Streamlit Secrets; or set env var; or enter manually.")
 
     st.divider()
 
-    st.markdown("Document")
-    st.caption("Recommended: commit WHOAMR.pdf to your repo root; same folder as streamlit_app.py.")
     use_upload = st.toggle("Upload PDF instead of repo WHOAMR.pdf", value=False)
     uploaded_pdf = st.file_uploader("Upload WHO AWaRe PDF", type=["pdf"]) if use_upload else None
 
     st.divider()
 
-    st.markdown("Retrieval")
     chunk_size = st.number_input("Chunk size; characters", min_value=600, max_value=4000, value=1500, step=100)
     chunk_overlap = st.number_input("Chunk overlap; characters", min_value=0, max_value=800, value=200, step=50)
     top_k = st.number_input("Top K chunks", min_value=2, max_value=10, value=5, step=1)
 
     st.divider()
 
-    st.markdown("Answer style")
     temperature = st.slider("Temperature", min_value=0.0, max_value=0.6, value=0.0, step=0.1)
-
-    st.divider()
-
     debug = st.toggle("Debug mode; show full errors", value=True)
 
     st.divider()
-
     st.subheader("Disclaimer")
     st.write(
         "Decision-support tool based on WHO AWaRe content provided. "
@@ -292,9 +276,9 @@ with st.sidebar:
     )
 
 
-status_col, diag_col = st.columns([2, 1])
+left, right = st.columns([2, 1])
 
-with diag_col:
+with right:
     st.subheader("Status")
     pdf_key, pdf_bytes, pdf_status = _get_pdf_bytes(DEFAULT_PDF_PATH, uploaded_pdf)
     st.write(pdf_status)
@@ -305,8 +289,6 @@ with diag_col:
         st.error("PDF unavailable.")
     if PdfReader is None or faiss is None:
         st.error("Dependencies missing; check requirements.txt.")
-
-    st.caption("Tip: if you see 'Retriever not ready' on Streamlit Cloud; set Secrets: OPENAI_API_KEY; confirm WHOAMR.pdf exists in repo root.")
 
 resources = None
 retriever_error = None
@@ -325,7 +307,7 @@ if openai_api_key and pdf_bytes is not None and PdfReader is not None and faiss 
         retriever_error = e
         resources = None
 
-with status_col:
+with left:
     st.subheader("Chat")
 
     if resources is None:
@@ -346,9 +328,7 @@ with status_col:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    question = st.chat_input(
-        "Ask about empiric therapy; dosing; duration; or when no antibiotics are appropriate"
-    )
+    question = st.chat_input("Ask about empiric therapy; dosing; duration; or when no antibiotics are appropriate")
 
     if question:
         st.session_state.messages.append({"role": "user", "content": question})
@@ -368,10 +348,9 @@ with status_col:
                 )
 
                 if not hits:
-                    st.write("Not found in the WHO AWaRe book context provided.")
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": "Not found in the WHO AWaRe book context provided."}
-                    )
+                    msg = "Not found in the WHO AWaRe book context provided."
+                    st.write(msg)
+                    st.session_state.messages.append({"role": "assistant", "content": msg})
                 else:
                     stream = _stream_answer(client, question, hits, float(temperature))
                     answer_text = st.write_stream(stream)
