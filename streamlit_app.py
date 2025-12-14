@@ -9,7 +9,7 @@ import numpy as np
 from openai import OpenAI
 
 try:
-    import faiss  # faiss-cpu
+    import faiss
 except Exception:
     faiss = None
 
@@ -19,16 +19,15 @@ except Exception:
     PdfReader = None
 
 
-APP_TITLE = "WHO Antibiotic Guide"
-APP_SUBTITLE = "AWaRe Clinical Assistant"
+APP_TITLE: str = "WHO Antibiotic Guide"
+APP_SUBTITLE: str = "AWaRe Clinical Assistant"
+DEFAULT_PDF_PATH: str = "WHOAMR.pdf"
 
-DEFAULT_PDF_PATH = "WHOAMR.pdf"
-
-EMBED_MODEL = "text-embedding-3-small"
-CHAT_MODEL = "gpt-4o-mini"
+EMBED_MODEL: str = "text-embedding-3-small"
+CHAT_MODEL: str = "gpt-4o-mini"
 
 
-WHO_SYSTEM_PROMPT = """
+WHO_SYSTEM_PROMPT: str = """
 You are WHO Antibiotic Guide; AWaRe Clinical Assistant.
 
 Purpose: support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
@@ -55,7 +54,7 @@ st.title(f"💊 {APP_TITLE}")
 st.caption(APP_SUBTITLE)
 
 st.write(
-    "Guideline-grounded decision support using the WHO AWaRe book; "
+    "Guideline grounded decision support using the WHO AWaRe book; "
     "supports antimicrobial stewardship; does not replace clinical judgment or local protocols."
 )
 
@@ -73,11 +72,9 @@ def _clean_text(s: str) -> str:
 
 
 def _read_pdf_pages_from_bytes(pdf_bytes: bytes) -> List[Dict]:
-    # FIX: wrap bytes in BytesIO so PdfReader can seek
     bio = io.BytesIO(pdf_bytes)
     reader = PdfReader(bio)
-
-    pages = []
+    pages: List[Dict] = []
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
         text = _clean_text(text)
@@ -90,11 +87,7 @@ def _read_pdf_bytes_from_path(path: str) -> bytes:
         return f.read()
 
 
-def _chunk_pages(
-    pages: List[Dict],
-    chunk_size_chars: int,
-    chunk_overlap_chars: int,
-) -> List[Dict]:
+def _chunk_pages(pages: List[Dict], chunk_size_chars: int, chunk_overlap_chars: int) -> List[Dict]:
     chunks: List[Dict] = []
     for p in pages:
         page_num = p["page"]
@@ -104,7 +97,6 @@ def _chunk_pages(
 
         start = 0
         n = len(text)
-
         while start < n:
             end = min(start + chunk_size_chars, n)
             chunk = text[start:end].strip()
@@ -118,15 +110,13 @@ def _chunk_pages(
 
 
 def _embed_texts(client: OpenAI, texts: List[str]) -> np.ndarray:
-    vectors = []
+    vectors: List[np.ndarray] = []
     batch_size = 96
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         resp = client.embeddings.create(model=EMBED_MODEL, input=batch)
-        batch_vecs = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
-        vectors.extend(batch_vecs)
-    arr = np.vstack(vectors).astype(np.float32)
-    return arr
+        vectors.extend([np.array(d.embedding, dtype=np.float32) for d in resp.data])
+    return np.vstack(vectors).astype(np.float32)
 
 
 def _build_index(vectors: np.ndarray) -> "faiss.Index":
@@ -142,7 +132,7 @@ def _search(index: "faiss.Index", client: OpenAI, query: str, chunks: List[Dict]
     faiss.normalize_L2(qvec)
     scores, ids = index.search(qvec, k)
 
-    hits = []
+    hits: List[Dict] = []
     for score, idx in zip(scores[0], ids[0]):
         if idx == -1:
             continue
@@ -152,7 +142,7 @@ def _search(index: "faiss.Index", client: OpenAI, query: str, chunks: List[Dict]
 
 
 def _make_context(hits: List[Dict], max_chars: int = 1200) -> str:
-    blocks = []
+    blocks: List[str] = []
     for i, h in enumerate(hits, start=1):
         excerpt = h["text"]
         if len(excerpt) > max_chars:
@@ -184,55 +174,72 @@ Write the answer following the required output format.
     )
 
 
-def _get_openai_key() -> Optional[str]:
-    key = None
+def _extract_openai_key(raw: Optional[str]) -> str:
+    """
+    Fixes UnicodeEncodeError by extracting a valid ASCII key token.
+    Accepts: sk-... or sk-proj-...
+    Returns empty string if invalid.
+    """
+    if not raw:
+        return ""
+
+    raw = raw.strip()
+
+    # Remove obvious wrapping quotes
+    raw = raw.strip('"').strip("'").strip()
+
+    # Extract the first plausible OpenAI key substring
+    m = re.search(r"(sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9_\-]{20,})", raw)
+    if m:
+        return m.group(1)
+
+    # If nothing matched; last attempt: keep only ASCII printable and retry
+    ascii_only = raw.encode("ascii", errors="ignore").decode("ascii", errors="ignore")
+    m2 = re.search(r"(sk-proj-[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9_\-]{20,})", ascii_only)
+    if m2:
+        return m2.group(1)
+
+    return ""
+
+
+def _get_openai_key() -> str:
+    key = ""
     try:
-        key = st.secrets.get("OPENAI_API_KEY")
+        key = st.secrets.get("OPENAI_API_KEY", "")
     except Exception:
-        key = None
+        key = ""
+
     if not key:
-        key = os.environ.get("OPENAI_API_KEY")
-    return key
+        key = os.environ.get("OPENAI_API_KEY", "")
+
+    return _extract_openai_key(key)
 
 
-def _get_pdf_bytes(local_path: str, uploaded_file) -> Tuple[str, Optional[bytes], str]:
-    if uploaded_file is not None:
-        data = uploaded_file.getvalue()
-        if not data:
-            return "upload:empty", None, "Uploaded PDF is empty."
-        return f"upload:{uploaded_file.name}:{len(data)}", data, f"Using uploaded PDF: {uploaded_file.name}"
-
+def _get_pdf_bytes_from_repo(local_path: str) -> Tuple[str, Optional[bytes], str]:
     if os.path.exists(local_path):
         try:
             data = _read_pdf_bytes_from_path(local_path)
-            return f"local:{local_path}:{len(data)}", data, f"Using repo PDF: {local_path}"
+            return f"repo:{local_path}:{len(data)}", data, f"Using PDF from repo: {local_path}"
         except Exception as e:
-            return "local:read_error", None, f"Failed to read repo PDF: {e}"
-
-    return "missing", None, f"Missing PDF at repo path: {local_path}"
+            return "repo:read_error", None, f"Failed to read repo PDF: {e}"
+    return "repo:missing", None, f"Missing PDF in repo root: {local_path}"
 
 
 @st.cache_resource(show_spinner=True)
-def build_retriever(
-    pdf_cache_key: str,
-    pdf_bytes: bytes,
-    chunk_size: int,
-    chunk_overlap: int,
-    openai_api_key: str,
-) -> Dict:
+def build_retriever(pdf_cache_key: str, pdf_bytes: bytes, chunk_size: int, chunk_overlap: int, openai_api_key: str) -> Dict:
     if PdfReader is None:
         raise RuntimeError("pypdf is not available.")
     if faiss is None:
         raise RuntimeError("faiss is not available.")
     if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY missing.")
+        raise RuntimeError("OPENAI_API_KEY missing or invalid. Remove emojis or extra text; keep only sk-...")
 
     client = OpenAI(api_key=openai_api_key)
 
     pages = _read_pdf_pages_from_bytes(pdf_bytes)
     chunks = _chunk_pages(pages, chunk_size, chunk_overlap)
     if not chunks:
-        raise RuntimeError("No text extracted from PDF. If this is a scanned PDF, use a text-based PDF or add OCR.")
+        raise RuntimeError("No text extracted from PDF. If this PDF is scanned, use a text-based PDF or add OCR.")
 
     vectors = _embed_texts(client, [c["text"] for c in chunks])
     index = _build_index(vectors)
@@ -243,22 +250,29 @@ def build_retriever(
 with st.sidebar:
     st.header("Configuration")
 
+    st.markdown("API key")
     use_manual = st.toggle("Enter API key manually", value=False)
-    manual_key = st.text_input("OpenAI API Key", type="password") if use_manual else ""
-    openai_api_key = manual_key.strip() or _get_openai_key() or ""
+
+    manual_raw = ""
+    if use_manual:
+        manual_raw = st.text_input("OpenAI API Key", type="password")
+
+    openai_api_key = _extract_openai_key(manual_raw) if manual_raw else _get_openai_key()
 
     if openai_api_key:
-        st.success("API key detected.")
+        st.success("API key valid; emojis and extra characters removed if present.")
     else:
-        st.warning("No API key found. Add OPENAI_API_KEY in Streamlit Secrets; or set env var; or enter manually.")
+        st.warning("API key not found or invalid. In Streamlit Secrets use: OPENAI_API_KEY = \"sk-...\" only.")
 
     st.divider()
 
-    use_upload = st.toggle("Upload PDF instead of repo WHOAMR.pdf", value=False)
-    uploaded_pdf = st.file_uploader("Upload WHO AWaRe PDF", type=["pdf"]) if use_upload else None
+    st.markdown("Document")
+    st.caption("This app reads WHOAMR.pdf from your GitHub repo; no upload is required.")
+    st.caption("Confirm WHOAMR.pdf is in the same folder as streamlit_app.py in GitHub.")
 
     st.divider()
 
+    st.markdown("Retrieval")
     chunk_size = st.number_input("Chunk size; characters", min_value=600, max_value=4000, value=1500, step=100)
     chunk_overlap = st.number_input("Chunk overlap; characters", min_value=0, max_value=800, value=200, step=50)
     top_k = st.number_input("Top K chunks", min_value=2, max_value=10, value=5, step=1)
@@ -280,15 +294,17 @@ left, right = st.columns([2, 1])
 
 with right:
     st.subheader("Status")
-    pdf_key, pdf_bytes, pdf_status = _get_pdf_bytes(DEFAULT_PDF_PATH, uploaded_pdf)
+
+    pdf_key, pdf_bytes, pdf_status = _get_pdf_bytes_from_repo(DEFAULT_PDF_PATH)
     st.write(pdf_status)
 
     if not openai_api_key:
-        st.error("API key missing.")
+        st.error("API key missing or invalid.")
     if pdf_bytes is None:
-        st.error("PDF unavailable.")
+        st.error("PDF unavailable in repo.")
     if PdfReader is None or faiss is None:
         st.error("Dependencies missing; check requirements.txt.")
+
 
 resources = None
 retriever_error = None
@@ -306,6 +322,7 @@ if openai_api_key and pdf_bytes is not None and PdfReader is not None and faiss 
     except Exception as e:
         retriever_error = e
         resources = None
+
 
 with left:
     st.subheader("Chat")
