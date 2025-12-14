@@ -20,7 +20,7 @@ except Exception:
 
 
 APP_TITLE: str = "WHO Antibiotic Guide"
-APP_SUBTITLE: str = "AWaRe Clinical Assistant"
+APP_SUBTITLE: str = "AWaRe(Access, Watch, Reserve) Clinical Assistant"
 DEFAULT_PDF_PATH: str = "WHOAMR.pdf"
 
 EMBED_MODEL: str = "text-embedding-3-small"
@@ -32,7 +32,7 @@ STEWARD_FOOTER: str = (
 )
 
 WHO_SYSTEM_PROMPT: str = """
-You are WHO Antibiotic Guide; AWaRe Clinical Assistant.
+You are WHO Antibiotic Guide; AWaRe(Access, Watch, Reserve) Clinical Assistant.
 
 Purpose: support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
 
