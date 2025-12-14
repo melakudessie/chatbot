@@ -1,27 +1,26 @@
 import os
 import re
-import time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import streamlit as st
+import numpy as np
 
 from openai import OpenAI
 
-import numpy as np
-
 try:
     import faiss  # faiss-cpu
-except Exception as e:
+except Exception:
     faiss = None
 
 try:
     from pypdf import PdfReader
-except Exception as e:
+except Exception:
     PdfReader = None
 
 
 APP_TITLE = "WHO Antibiotic Guide"
 APP_SUBTITLE = "AWaRe Clinical Assistant"
+
 DEFAULT_PDF_PATH = "WHOAMR.pdf"
 
 EMBED_MODEL = "text-embedding-3-small"
@@ -30,73 +29,39 @@ CHAT_MODEL = "gpt-4o-mini"
 
 WHO_SYSTEM_PROMPT = """
 You are WHO Antibiotic Guide; AWaRe Clinical Assistant.
+
 Purpose: support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
-Scope: common infections; empiric treatment; when a no antibiotic approach is appropriate; choice of antibiotics; dosage; duration; adults and children.
+
+Scope: management of common infections; empiric antibiotic treatment at first presentation; when a no antibiotic approach is appropriate; choice of antibiotics; dosage; route; frequency; treatment duration; adults and children.
+
 Safety:
 1: Do not diagnose; do not replace clinical judgement; do not replace local or national guidelines.
 2: If the answer is not explicitly supported by the provided context; say: "Not found in the WHO AWaRe book context provided."
 3: Prefer a no antibiotic approach when the context indicates it.
-4: When recommending antibiotics; include dose; route; frequency; and duration if present in context.
-5: Keep output concise and clinical; include a short stewardship reminder at the end.
+4: When mentioning antibiotics; include dose; route; frequency; and duration if present.
+5: Keep output concise; add a short reminder to follow local guidance and clinical judgment.
+
 Output format:
 A: Answer
-B: Key dosing and duration
+B: Dosing and duration
 C: When no antibiotics are appropriate
-D: Source excerpts with page numbers
+D: Sources; page numbers; short excerpts
 """.strip()
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="💊", layout="wide")
-
-st.title(f"💬 {APP_TITLE}")
+st.title(f"💊 {APP_TITLE}")
 st.caption(APP_SUBTITLE)
 
 st.write(
-    "Guideline grounded decision support using the WHO AWaRe antibiotic book; "
-    "supports stewardship and rational antibiotic use; does not replace clinical judgement or local protocols."
+    "Guideline-grounded decision support using the WHO AWaRe book; "
+    "supports antimicrobial stewardship; does not replace clinical judgment or local protocols."
 )
 
-if faiss is None:
-    st.error("FAISS is not installed. Install faiss-cpu in your environment.")
 if PdfReader is None:
-    st.error("pypdf is not installed. Install pypdf in your environment.")
-
-with st.sidebar:
-    st.header("Settings")
-
-    st.markdown("API key handling")
-    st.caption("Recommended: set OPENAI_API_KEY as an environment variable or Streamlit secret.")
-
-    api_key_from_secrets = None
-    try:
-        api_key_from_secrets = st.secrets.get("OPENAI_API_KEY", None)
-    except Exception:
-        api_key_from_secrets = None
-
-    api_key_from_env = os.environ.get("OPENAI_API_KEY")
-
-    use_manual_key = st.toggle("Enter API key manually", value=False)
-    manual_key = None
-    if use_manual_key:
-        manual_key = st.text_input("OpenAI API Key", type="password")
-
-    openai_api_key = manual_key or api_key_from_secrets or api_key_from_env
-    if not openai_api_key:
-        st.warning("No API key found. Set OPENAI_API_KEY in secrets or environment; or enable manual entry.")
-
-    chunk_size = st.number_input("Chunk size; characters", min_value=600, max_value=4000, value=1500, step=100)
-    chunk_overlap = st.number_input("Chunk overlap; characters", min_value=0, max_value=800, value=200, step=50)
-    top_k = st.number_input("Top K retrieved chunks", min_value=2, max_value=10, value=5, step=1)
-
-    st.markdown("Answer style")
-    temperature = st.slider("Temperature", min_value=0.0, max_value=0.6, value=0.0, step=0.1)
-
-    st.markdown("Document")
-    use_uploaded_pdf = st.toggle("Upload a PDF instead of using local WHOAMR.pdf", value=False)
-
-    uploaded_pdf = None
-    if use_uploaded_pdf:
-        uploaded_pdf = st.file_uploader("Upload WHO AWaRe PDF", type=["pdf"])
+    st.error("Dependency missing: pypdf. Add pypdf to requirements.txt.")
+if faiss is None:
+    st.error("Dependency missing: faiss. Add faiss-cpu to requirements.txt.")
 
 
 def _clean_text(s: str) -> str:
@@ -106,7 +71,7 @@ def _clean_text(s: str) -> str:
     return s.strip()
 
 
-def _extract_pdf_pages(pdf_bytes: bytes) -> List[Dict]:
+def _read_pdf_pages_from_bytes(pdf_bytes: bytes) -> List[Dict]:
     reader = PdfReader(pdf_bytes)
     pages = []
     for i, page in enumerate(reader.pages):
@@ -116,18 +81,17 @@ def _extract_pdf_pages(pdf_bytes: bytes) -> List[Dict]:
     return pages
 
 
-def _extract_pdf_pages_from_path(path: str) -> List[Dict]:
+def _read_pdf_bytes_from_path(path: str) -> bytes:
     with open(path, "rb") as f:
-        data = f.read()
-    return _extract_pdf_pages(data)
+        return f.read()
 
 
-def _chunk_text_by_pages(
+def _chunk_pages(
     pages: List[Dict],
     chunk_size_chars: int,
-    overlap_chars: int,
+    chunk_overlap_chars: int,
 ) -> List[Dict]:
-    chunks = []
+    chunks: List[Dict] = []
     for p in pages:
         page_num = p["page"]
         text = p["text"]
@@ -141,23 +105,15 @@ def _chunk_text_by_pages(
             end = min(start + chunk_size_chars, n)
             chunk = text[start:end].strip()
             if chunk:
-                chunks.append(
-                    {
-                        "page": page_num,
-                        "text": chunk,
-                    }
-                )
+                chunks.append({"page": page_num, "text": chunk})
             if end >= n:
                 break
-            start = max(0, end - overlap_chars)
+            start = max(0, end - chunk_overlap_chars)
 
     return chunks
 
 
 def _embed_texts(client: OpenAI, texts: List[str]) -> np.ndarray:
-    """
-    Returns: float32 array shape (len(texts), dim)
-    """
     vectors = []
     batch_size = 96
     for i in range(0, len(texts), batch_size):
@@ -165,100 +121,55 @@ def _embed_texts(client: OpenAI, texts: List[str]) -> np.ndarray:
         resp = client.embeddings.create(model=EMBED_MODEL, input=batch)
         batch_vecs = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
         vectors.extend(batch_vecs)
-    return np.vstack(vectors)
+    arr = np.vstack(vectors).astype(np.float32)
+    return arr
 
 
-def _build_faiss_index(vectors: np.ndarray) -> faiss.Index:
+def _build_index(vectors: np.ndarray) -> "faiss.Index":
     dim = vectors.shape[1]
     index = faiss.IndexFlatIP(dim)
-
     faiss.normalize_L2(vectors)
     index.add(vectors)
     return index
 
 
-def _search_index(
-    index: faiss.Index,
-    client: OpenAI,
-    query: str,
-    chunks: List[Dict],
-    k: int,
-) -> List[Dict]:
+def _search(index: "faiss.Index", client: OpenAI, query: str, chunks: List[Dict], k: int) -> List[Dict]:
     qvec = _embed_texts(client, [query])
     faiss.normalize_L2(qvec)
     scores, ids = index.search(qvec, k)
 
-    results = []
+    hits = []
     for score, idx in zip(scores[0], ids[0]):
         if idx == -1:
             continue
-        item = chunks[int(idx)]
-        results.append(
-            {
-                "score": float(score),
-                "page": item["page"],
-                "text": item["text"],
-            }
-        )
-    return results
+        c = chunks[int(idx)]
+        hits.append({"score": float(score), "page": c["page"], "text": c["text"]})
+    return hits
 
 
-@st.cache_resource(show_spinner=True)
-def build_retriever_resources(
-    pdf_cache_key: str,
-    pdf_bytes: bytes,
-    chunk_size_chars: int,
-    overlap_chars: int,
-    openai_api_key_for_cache: str,
-) -> Dict:
-    """
-    Cached: builds chunks, embeddings, FAISS index.
-    pdf_cache_key ensures cache invalidation when PDF changes.
-    """
-    if not openai_api_key_for_cache:
-        raise ValueError("OPENAI_API_KEY is required to build index.")
-
-    client = OpenAI(api_key=openai_api_key_for_cache)
-
-    pages = _extract_pdf_pages(pdf_bytes)
-    chunks = _chunk_text_by_pages(pages, chunk_size_chars, overlap_chars)
-
-    texts = [c["text"] for c in chunks]
-    vectors = _embed_texts(client, texts)
-    index = _build_faiss_index(vectors)
-
-    return {"chunks": chunks, "index": index}
-
-
-def _make_context_block(hits: List[Dict], max_chars_per_hit: int = 1200) -> str:
+def _make_context(hits: List[Dict], max_chars: int = 1200) -> str:
     blocks = []
     for i, h in enumerate(hits, start=1):
         excerpt = h["text"]
-        if len(excerpt) > max_chars_per_hit:
-            excerpt = excerpt[:max_chars_per_hit].rstrip() + " ..."
+        if len(excerpt) > max_chars:
+            excerpt = excerpt[:max_chars].rstrip() + " ..."
         blocks.append(f"Source {i}; page {h['page']}:\n{excerpt}")
     return "\n\n".join(blocks)
 
 
-def _answer_with_citations(
-    client: OpenAI,
-    query: str,
-    hits: List[Dict],
-    temperature: float,
-) -> str:
-    context = _make_context_block(hits)
-
+def _stream_answer(client: OpenAI, question: str, hits: List[Dict], temperature: float):
+    context = _make_context(hits)
     user_prompt = f"""
 WHO AWaRe book context:
 {context}
 
 User question:
-{query}
+{question}
 
 Write the answer following the required output format.
 """.strip()
 
-    stream = client.chat.completions.create(
+    return client.chat.completions.create(
         model=CHAT_MODEL,
         temperature=temperature,
         messages=[
@@ -267,125 +178,215 @@ Write the answer following the required output format.
         ],
         stream=True,
     )
-    return stream
 
 
-def _get_pdf_bytes() -> Tuple[str, bytes]:
+def _get_openai_key() -> Optional[str]:
+    key = None
+    try:
+        key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        key = None
+    if not key:
+        key = os.environ.get("OPENAI_API_KEY")
+    return key
+
+
+def _get_pdf_bytes(local_path: str, uploaded_file) -> Tuple[str, Optional[bytes], str]:
     """
-    Returns: cache_key, pdf_bytes
+    Returns: cache_key; bytes or None; status message
     """
-    if use_uploaded_pdf and uploaded_pdf is not None:
-        data = uploaded_pdf.getvalue()
-        cache_key = f"upload:{uploaded_pdf.name}:{len(data)}"
-        return cache_key, data
+    if uploaded_file is not None:
+        data = uploaded_file.getvalue()
+        if not data:
+            return "upload:empty", None, "Uploaded PDF is empty."
+        return f"upload:{uploaded_file.name}:{len(data)}", data, f"Using uploaded PDF: {uploaded_file.name}"
 
-    if os.path.exists(DEFAULT_PDF_PATH):
-        with open(DEFAULT_PDF_PATH, "rb") as f:
-            data = f.read()
-        cache_key = f"local:{DEFAULT_PDF_PATH}:{len(data)}"
-        return cache_key, data
-
-    return "missing", b""
-
-
-def _trim_chat_history(messages: List[Dict], keep_last: int = 8) -> List[Dict]:
-    """
-    Not used in the RAG call itself; kept for UI history display only.
-    """
-    if len(messages) <= keep_last * 2:
-        return messages
-    return messages[-keep_last * 2 :]
-
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-col1, col2 = st.columns([2, 1])
-
-with col2:
-    st.subheader("Status")
-    pdf_key, pdf_bytes = _get_pdf_bytes()
-
-    if pdf_key == "missing":
-        st.error("WHOAMR.pdf not found and no upload provided. Add WHOAMR.pdf or upload it in the sidebar.")
-
-    if not openai_api_key:
-        st.warning("API key missing; add it in secrets or environment; or enable manual entry.")
-
-    if pdf_key != "missing" and openai_api_key:
+    if os.path.exists(local_path):
         try:
-            with st.spinner("Indexing or loading cached index"):
-                resources = build_retriever_resources(
-                    pdf_cache_key=pdf_key,
-                    pdf_bytes=pdf_bytes,
-                    chunk_size_chars=int(chunk_size),
-                    overlap_chars=int(chunk_overlap),
-                    openai_api_key_for_cache=openai_api_key,
-                )
-            st.success("Retriever ready")
-            st.caption(f"Chunks indexed: {len(resources['chunks'])}")
+            data = _read_pdf_bytes_from_path(local_path)
+            return f"local:{local_path}:{len(data)}", data, f"Using repo PDF: {local_path}"
         except Exception as e:
-            st.error(f"Index build failed: {e}")
-            resources = None
+            return "local:read_error", None, f"Failed to read repo PDF: {e}"
+
+    return "missing", None, f"Missing PDF at repo path: {local_path}"
+
+
+@st.cache_resource(show_spinner=True)
+def build_retriever(
+    pdf_cache_key: str,
+    pdf_bytes: bytes,
+    chunk_size: int,
+    chunk_overlap: int,
+    openai_api_key: str,
+) -> Dict:
+    """
+    Cached: creates chunks; embeddings; FAISS index.
+    Cache invalidates if pdf_cache_key changes; or chunk settings change.
+    """
+    if PdfReader is None:
+        raise RuntimeError("pypdf is not available.")
+    if faiss is None:
+        raise RuntimeError("faiss is not available.")
+    if not openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY missing.")
+
+    client = OpenAI(api_key=openai_api_key)
+
+    pages = _read_pdf_pages_from_bytes(pdf_bytes)
+    chunks = _chunk_pages(pages, chunk_size, chunk_overlap)
+    if not chunks:
+        raise RuntimeError("No text extracted from PDF; the PDF may be scanned or protected.")
+
+    vectors = _embed_texts(client, [c["text"] for c in chunks])
+    index = _build_index(vectors)
+
+    return {"chunks": chunks, "index": index}
+
+
+with st.sidebar:
+    st.header("Configuration")
+
+    st.markdown("Keys")
+    key_source = "none"
+    if _get_openai_key():
+        key_source = "secrets or environment"
+
+    use_manual = st.toggle("Enter API key manually", value=False)
+    manual_key = st.text_input("OpenAI API Key", type="password") if use_manual else ""
+    openai_api_key = manual_key.strip() or _get_openai_key() or ""
+
+    if openai_api_key:
+        st.success(f"API key detected; source: {'manual' if manual_key.strip() else key_source}")
     else:
-        resources = None
+        st.warning("No API key found. Add OPENAI_API_KEY in Streamlit Secrets; or set env var; or enter manually.")
+
+    st.divider()
+
+    st.markdown("Document")
+    st.caption("Recommended: commit WHOAMR.pdf to your repo root; same folder as streamlit_app.py.")
+    use_upload = st.toggle("Upload PDF instead of repo WHOAMR.pdf", value=False)
+    uploaded_pdf = st.file_uploader("Upload WHO AWaRe PDF", type=["pdf"]) if use_upload else None
+
+    st.divider()
+
+    st.markdown("Retrieval")
+    chunk_size = st.number_input("Chunk size; characters", min_value=600, max_value=4000, value=1500, step=100)
+    chunk_overlap = st.number_input("Chunk overlap; characters", min_value=0, max_value=800, value=200, step=50)
+    top_k = st.number_input("Top K chunks", min_value=2, max_value=10, value=5, step=1)
+
+    st.divider()
+
+    st.markdown("Answer style")
+    temperature = st.slider("Temperature", min_value=0.0, max_value=0.6, value=0.0, step=0.1)
+
+    st.divider()
+
+    debug = st.toggle("Debug mode; show full errors", value=True)
+
+    st.divider()
 
     st.subheader("Disclaimer")
     st.write(
-        "Decision support only; based on WHO AWaRe content provided. "
-        "Does not replace clinical judgement or local and national prescribing guidelines."
+        "Decision-support tool based on WHO AWaRe content provided. "
+        "Does not replace clinical judgment or local and national prescribing guidelines."
     )
 
-with col1:
+
+status_col, diag_col = st.columns([2, 1])
+
+with diag_col:
+    st.subheader("Status")
+    pdf_key, pdf_bytes, pdf_status = _get_pdf_bytes(DEFAULT_PDF_PATH, uploaded_pdf)
+    st.write(pdf_status)
+
+    if not openai_api_key:
+        st.error("API key missing.")
+    if pdf_bytes is None:
+        st.error("PDF unavailable.")
+    if PdfReader is None or faiss is None:
+        st.error("Dependencies missing; check requirements.txt.")
+
+    st.caption("Tip: if you see 'Retriever not ready' on Streamlit Cloud; set Secrets: OPENAI_API_KEY; confirm WHOAMR.pdf exists in repo root.")
+
+resources = None
+retriever_error = None
+
+if openai_api_key and pdf_bytes is not None and PdfReader is not None and faiss is not None:
+    try:
+        with st.spinner("Preparing retriever; building index on first run; using cache later"):
+            resources = build_retriever(
+                pdf_cache_key=pdf_key,
+                pdf_bytes=pdf_bytes,
+                chunk_size=int(chunk_size),
+                chunk_overlap=int(chunk_overlap),
+                openai_api_key=openai_api_key,
+            )
+    except Exception as e:
+        retriever_error = e
+        resources = None
+
+with status_col:
     st.subheader("Chat")
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    if resources is None:
+        st.error("Retriever not ready. Check API key and PDF availability in the sidebar.")
+        if retriever_error is not None:
+            if debug:
+                st.exception(retriever_error)
+            else:
+                st.write(f"Error: {retriever_error}")
+        st.stop()
 
-    prompt = st.chat_input("Ask about empiric therapy; dosing; duration; or when no antibiotics are appropriate")
+    st.success(f"Retriever ready; chunks indexed: {len(resources['chunks'])}")
 
-    if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    question = st.chat_input(
+        "Ask about empiric therapy; dosing; duration; or when no antibiotics are appropriate"
+    )
+
+    if question:
+        st.session_state.messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(question)
 
-        if resources is None:
-            with st.chat_message("assistant"):
-                st.error("Retriever not ready. Check API key and PDF availability in the sidebar.")
-        else:
-            client = OpenAI(api_key=openai_api_key)
+        client = OpenAI(api_key=openai_api_key)
 
-            with st.chat_message("assistant"):
-                try:
-                    hits = _search_index(
-                        index=resources["index"],
-                        client=client,
-                        query=prompt,
-                        chunks=resources["chunks"],
-                        k=int(top_k),
+        with st.chat_message("assistant"):
+            try:
+                hits = _search(
+                    index=resources["index"],
+                    client=client,
+                    query=question,
+                    chunks=resources["chunks"],
+                    k=int(top_k),
+                )
+
+                if not hits:
+                    st.write("Not found in the WHO AWaRe book context provided.")
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": "Not found in the WHO AWaRe book context provided."}
                     )
+                else:
+                    stream = _stream_answer(client, question, hits, float(temperature))
+                    answer_text = st.write_stream(stream)
+                    st.session_state.messages.append({"role": "assistant", "content": answer_text})
 
-                    if not hits:
-                        st.write("Not found in the WHO AWaRe book context provided.")
-                    else:
-                        stream = _answer_with_citations(
-                            client=client,
-                            query=prompt,
-                            hits=hits,
-                            temperature=float(temperature),
-                        )
+                    with st.expander("Retrieved sources; excerpts with page numbers"):
+                        for i, h in enumerate(hits, start=1):
+                            st.markdown(f"Source {i}; page {h['page']}; similarity {h['score']:.3f}")
+                            st.write(h["text"][:1500] + (" ..." if len(h["text"]) > 1500 else ""))
 
-                        response_text = st.write_stream(stream)
-                        st.session_state.messages.append({"role": "assistant", "content": response_text})
-
-                        with st.expander("Retrieved sources; page linked"):
-                            for i, h in enumerate(hits, start=1):
-                                st.markdown(f"Source {i}; page {h['page']}; similarity {h['score']:.3f}")
-                                st.write(h["text"][:1500] + (" ..." if len(h["text"]) > 1500 else ""))
-                                st.markdown("")
-
-                except Exception as e:
+            except Exception as e:
+                if debug:
+                    st.exception(e)
+                else:
                     st.error(f"Request failed: {e}")
 
-    st.session_state.messages = _trim_chat_history(st.session_state.messages, keep_last=10)
+    if len(st.session_state.messages) > 24:
+        st.session_state.messages = st.session_state.messages[-24:]
