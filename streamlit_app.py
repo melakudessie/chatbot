@@ -31,29 +31,52 @@ STEWARD_FOOTER: str = (
     "follow local guidance and clinical judgment."
 )
 
+# IMPROVED SYSTEM PROMPT - removed A/B/C/D structure for cleaner output
 WHO_SYSTEM_PROMPT: str = """
-You are WHO Antibiotic Guide; AWaRe(Access, Watch, Reserve) Clinical Assistant.
+You are the WHO Antibiotic Guide, an AWaRe (Access, Watch, Reserve) Clinical Assistant.
 
-Purpose: support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
+Purpose: Support rational antibiotic use and antimicrobial stewardship using ONLY the provided WHO AWaRe book context.
 
-Scope: common infections; empiric treatment at first presentation; when a no antibiotic approach is appropriate; antibiotic choice; dosage; route; frequency; duration; adults and children.
+Scope: Common infections, empiric treatment at first presentation, when antibiotics are not appropriate, antibiotic choice, dosage, route, frequency, duration for adults and children.
 
 Safety rules:
-1: Use ONLY the provided WHO context; do not use outside knowledge.
-2: If the answer is not explicitly supported by the context; say: "Not found in the WHO AWaRe book context provided."
-3: Only recommend a "no antibiotic approach" if the retrieved WHO context explicitly states antibiotics are not needed; not recommended; should be avoided; or similar.
-4: Do not diagnose; do not replace clinical judgment; do not replace local or national guidelines.
+1. Use ONLY the provided WHO context - do not use outside knowledge
+2. If the answer is not explicitly supported by the context, say: "I couldn't find specific information about this in the WHO AWaRe handbook provided."
+3. Only recommend avoiding antibiotics if the WHO context explicitly states antibiotics are not needed, not recommended, or should be avoided
+4. Do not diagnose, do not replace clinical judgment, do not replace local or national guidelines
 
-Formatting rules:
-A: Answer; one short paragraph.
-B: Dosing and duration; bullet points; include mg/kg; route; frequency; duration if present.
-C: No antibiotic guidance; either:
-   - "No antibiotic approach is appropriate" with the WHO justification; OR
-   - "Antibiotics are recommended" if WHO indicates antibiotics are needed; OR
-   - "Not found in the WHO AWaRe book context provided."
-D: Sources; page numbers; short excerpts.
+Response format:
+Write a clear, professional medical reference response with these sections:
 
-Always end with this line:
+**Main Answer:**
+- Provide a direct, concise answer to the question (2-3 sentences)
+- Include the AWaRe category (Access/Watch/Reserve) when discussing specific antibiotics
+- Use clear medical terminology but remain accessible
+
+**Treatment Details:** (only include if the question asks about treatment/dosing)
+- Dosing: specific doses with units (e.g., mg/kg, g)
+- Route: oral, IV, IM, etc.
+- Frequency: every X hours, times daily, etc.
+- Duration: number of days
+- Format as bullet points for clarity
+
+**When Antibiotics Are NOT Needed:** (only include if WHO context indicates this)
+- State clearly if antibiotics are not appropriate
+- Provide the WHO justification
+
+**Sources:**
+- Cite page numbers from the WHO AWaRe handbook
+- Include brief relevant excerpts (1-2 sentences max per source)
+- Maximum 3 sources
+
+Guidelines:
+- Be concise and direct - avoid unnecessary repetition
+- Do not use labels like "A:", "B:", "C:", "D:"
+- Use section headers like "**Treatment Details:**" for clarity
+- If information is incomplete, acknowledge this clearly
+- Focus on practical clinical guidance
+
+Always end your response with:
 Stewardship note: use the narrowest effective antibiotic; reassess at 48 to 72 hours; follow local guidance and clinical judgment.
 """.strip()
 
@@ -164,13 +187,14 @@ def _search(index: "faiss.Index", client: OpenAI, query: str, chunks: List[Dict]
     return hits
 
 
-def _make_context(hits: List[Dict], max_chars: int = 1200) -> str:
+def _make_context(hits: List[Dict], max_chars: int = 1500) -> str:
+    """Create context from retrieved chunks - increased from 1200 to 1500 chars"""
     blocks: List[str] = []
     for i, h in enumerate(hits, start=1):
         excerpt = h["text"]
         if len(excerpt) > max_chars:
             excerpt = excerpt[:max_chars].rstrip() + " ..."
-        blocks.append(f"Source {i}; page {h['page']}:\n{excerpt}")
+        blocks.append(f"[Source {i}, Page {h['page']}]:\n{excerpt}")
     return "\n\n".join(blocks)
 
 
@@ -183,7 +207,7 @@ WHO AWaRe book context:
 User question:
 {question}
 
-Write the answer following the required output format.
+Provide a clear, well-structured answer following the response format guidelines.
 """.strip()
 
     return client.chat.completions.create(
@@ -265,9 +289,9 @@ def build_retriever(pdf_cache_key: str, pdf_bytes: bytes, chunk_size: int, chunk
 
 
 with st.sidebar:
-    st.header("Configuration")
+    st.header("⚙️ Configuration")
 
-    st.markdown("API key")
+    st.markdown("**API Key**")
     use_manual = st.toggle("Enter API key manually", value=False)
 
     manual_raw = ""
@@ -277,32 +301,47 @@ with st.sidebar:
     openai_api_key = _extract_openai_key(manual_raw) if manual_raw else _get_openai_key_from_secrets_or_env()
 
     if openai_api_key:
-        st.success("API key valid.")
+        st.success("✅ API key valid.")
     else:
-        st.warning('API key not found or invalid. In Streamlit Secrets use: OPENAI_API_KEY = "sk-..."')
+        st.warning('⚠️ API key not found or invalid. In Streamlit Secrets use: OPENAI_API_KEY = "sk-..."')
 
     st.divider()
 
-    st.markdown("Document")
+    st.markdown("**📄 Document**")
     st.caption("This app reads WHOAMR.pdf from your GitHub repo; no upload is required.")
     st.caption("Confirm WHOAMR.pdf is in the same folder as streamlit_app.py in GitHub.")
 
     st.divider()
 
-    st.markdown("Retrieval")
-    chunk_size = st.number_input("Chunk size; characters", min_value=600, max_value=4000, value=1500, step=100)
-    chunk_overlap = st.number_input("Chunk overlap; characters", min_value=0, max_value=800, value=200, step=50)
+    st.markdown("**🔍 Retrieval Settings**")
+    chunk_size = st.number_input("Chunk size (characters)", min_value=600, max_value=4000, value=1500, step=100)
+    chunk_overlap = st.number_input("Chunk overlap (characters)", min_value=0, max_value=800, value=200, step=50)
     top_k = st.number_input("Top K chunks", min_value=2, max_value=10, value=5, step=1)
 
     st.divider()
 
+    st.markdown("**🎛️ Model Settings**")
     temperature = st.slider("Temperature", min_value=0.0, max_value=0.6, value=0.0, step=0.1)
-    debug = st.toggle("Debug mode; show full errors", value=False)
+    debug = st.toggle("Debug mode (show full errors)", value=False)
 
     st.divider()
 
-    st.subheader("Disclaimer")
-    st.write(
+    st.markdown("**💡 Example Questions**")
+    example_questions = [
+        "What is the first line treatment for pneumonia?",
+        "What are reserve antibiotics?",
+        "Treatment for UTI in adults?",
+        "Amoxicillin dosing for children?",
+    ]
+    
+    for eq in example_questions:
+        if st.button(eq, key=f"example_{eq}", use_container_width=True):
+            st.session_state["example_question"] = eq
+
+    st.divider()
+
+    st.subheader("⚠️ Disclaimer")
+    st.caption(
         "Decision support tool based on WHO AWaRe content provided. "
         "Does not replace clinical judgment or local and national prescribing guidelines."
     )
@@ -311,17 +350,17 @@ with st.sidebar:
 left, right = st.columns([2, 1])
 
 with right:
-    st.subheader("Status")
+    st.subheader("📊 Status")
 
     pdf_key, pdf_bytes, pdf_status = _get_pdf_bytes_from_repo(DEFAULT_PDF_PATH)
     st.write(pdf_status)
 
     if not openai_api_key:
-        st.error("API key missing or invalid.")
+        st.error("❌ API key missing or invalid.")
     if pdf_bytes is None:
-        st.error("PDF unavailable in repo.")
+        st.error("❌ PDF unavailable in repo.")
     if PdfReader is None or faiss is None:
-        st.error("Dependencies missing; check requirements.txt.")
+        st.error("❌ Dependencies missing; check requirements.txt.")
 
 
 resources = None
@@ -329,7 +368,7 @@ retriever_error = None
 
 if openai_api_key and pdf_bytes is not None and PdfReader is not None and faiss is not None:
     try:
-        with st.spinner("Preparing retriever; building index on first run; using cache later"):
+        with st.spinner("🔨 Preparing retriever; building index on first run; using cache later"):
             resources = build_retriever(
                 pdf_cache_key=pdf_key,
                 pdf_bytes=pdf_bytes,
@@ -343,10 +382,10 @@ if openai_api_key and pdf_bytes is not None and PdfReader is not None and faiss 
 
 
 with left:
-    st.subheader("Chat")
+    st.subheader("💬 Chat")
 
     if resources is None:
-        st.error("Retriever not ready. Check API key and PDF availability in the sidebar.")
+        st.error("❌ Retriever not ready. Check API key and PDF availability in the sidebar.")
         if retriever_error is not None:
             if debug:
                 st.exception(retriever_error)
@@ -354,16 +393,23 @@ with left:
                 st.write(f"Error: {retriever_error}")
         st.stop()
 
-    st.success(f"Retriever ready; chunks indexed: {len(resources['chunks'])}")
+    st.success(f"✅ Retriever ready; chunks indexed: {len(resources['chunks'])}")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Display chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    question = st.chat_input("Ask about empiric therapy; dosing; duration; or when no antibiotics are appropriate")
+    # Handle example question button clicks
+    if "example_question" in st.session_state:
+        question = st.session_state["example_question"]
+        del st.session_state["example_question"]
+        st.rerun()
+    else:
+        question = st.chat_input("Ask about empiric therapy, dosing, duration, or when no antibiotics are appropriate...")
 
     if question:
         st.session_state.messages.append({"role": "user", "content": question})
@@ -383,8 +429,14 @@ with left:
                 )
 
                 if not hits:
-                    msg = ensure_footer("Not found in the WHO AWaRe book context provided.")
-                    st.write(msg)
+                    msg = ensure_footer(
+                        "I couldn't find specific information about this in the WHO AWaRe handbook provided.\n\n"
+                        "**Try:**\n"
+                        "- Rephrasing with more general terms\n"
+                        "- Asking about the condition rather than a specific drug\n"
+                        "- Using example questions from the sidebar"
+                    )
+                    st.markdown(msg)
                     st.session_state.messages.append({"role": "assistant", "content": msg})
                 else:
                     stream = _stream_answer(client, question, hits, float(temperature))
@@ -392,17 +444,27 @@ with left:
                     answer_text = ensure_footer(answer_text)
                     st.session_state.messages.append({"role": "assistant", "content": answer_text})
 
-                    with st.expander("Retrieved sources; excerpts with page numbers"):
+                    # Improved sources display
+                    with st.expander("📚 View Retrieved Sources", expanded=False):
+                        st.caption(f"Retrieved {len(hits)} most relevant chunks from the WHO AWaRe handbook:")
                         for i, h in enumerate(hits, start=1):
-                            st.markdown(f"Source {i}; page {h['page']}; similarity {h['score']:.3f}")
-                            excerpt = h["text"][:900]
-                            st.write(excerpt + (" ..." if len(h["text"]) > 900 else ""))
+                            st.markdown(f"**Source {i}** | Page {h['page']} | Similarity: {h['score']:.3f}")
+                            excerpt = h["text"][:800]
+                            st.text(excerpt + (" ..." if len(h["text"]) > 800 else ""))
+                            if i < len(hits):
+                                st.divider()
 
             except Exception as e:
                 if debug:
                     st.exception(e)
                 else:
-                    st.error(f"Request failed: {e}")
+                    st.error(f"❌ Request failed: {e}")
+                    st.info("Enable 'Debug mode' in the sidebar to see full error details.")
 
+    # Limit chat history to prevent memory issues
     if len(st.session_state.messages) > 24:
         st.session_state.messages = st.session_state.messages[-24:]
+
+# Footer
+st.divider()
+st.caption("WHO AWaRe Antibiotic Guide | Decision support tool | Always follow local protocols and clinical judgment")
