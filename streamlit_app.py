@@ -19,8 +19,8 @@ except Exception:
     PdfReader = None
 
 
-APP_TITLE: str = "WHO Antibiotic Guide"
-APP_SUBTITLE: str = "AWaRe(Access, Watch, Reserve) Clinical Assistant"
+APP_TITLE: str = "Antibiotic Use Assistant"
+APP_SUBTITLE: str = " WHO AWaRe(Access, Watch, Reserve) Clinical Assistant"
 DEFAULT_PDF_PATH: str = "WHOAMR.pdf"
 
 EMBED_MODEL: str = "text-embedding-3-small"
