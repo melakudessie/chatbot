@@ -1,373 +1,110 @@
+import os
+import json
+import numpy as np
+import faiss
 import streamlit as st
 from openai import OpenAI
-import pypdf
-import numpy as np
-from pathlib import Path
 
-# ================================
-# CONFIGURATION
-# ================================
-APP_TITLE = "PrescribeWise - Health Worker Assistant"
-MODEL_NAME = "gpt-4o-mini"
-EMBEDDING_MODEL = "text-embedding-3-small"
+INDEX_DIR = "rag_index"
+META_PATH = os.path.join(INDEX_DIR, "meta.jsonl")
+FAISS_PATH = os.path.join(INDEX_DIR, "faiss.index")
 
-# RAG Parameters (Hidden from UI)
-CHUNK_SIZE = 2500
-CHUNK_OVERLAP = 200
-TOP_K_CHUNKS = 5
+EMBED_MODEL = "text-embedding-3-small"
+CHAT_MODEL = "gpt-4o-mini"
 
-st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon="🩺",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+TOP_K = 5
 
-# ================================
-# CSS & STYLING
-# ================================
-def load_css():
-    st.markdown("""
-    <style>
-        .header-container {
-            background: linear-gradient(135deg, #0051A5 0%, #00A3DD 100%);
-            padding: 25px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            color: white;
-            text-align: center;
-        }
-        .header-title {
-            font-size: 2em;
-            font-weight: 700;
-            margin: 0;
-            color: white;
-        }
-        .header-subtitle {
-            font-size: 1.1em;
-            opacity: 0.9;
-            margin-top: 5px;
-            color: #E0F2FF;
-        }
-        .info-box {
-            background-color: #F8F9FA;
-            padding: 20px;
-            border-radius: 10px;
-            border-left: 5px solid #0051A5;
-            margin-bottom: 20px;
-        }
-        .disclaimer-box {
-            background-color: #FFF3CD;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 5px solid #FFC107;
-            margin-bottom: 20px;
-            font-size: 0.9em;
-            color: #856404;
-        }
-        .stButton > button {
-            background-color: #0051A5;
-            color: white;
-            font-weight: 600;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+SYSTEM_PROMPT = """
+You are PrescribeWise, a clinical decision-support assistant.
 
-# ================================
-# RAG LOGIC (Chunking & Search)
-# ================================
+Source policy: Use ONLY the retrieved WHO document excerpts provided in the Context.
+If the Context does not contain enough information, say so clearly and ask a targeted follow-up question.
 
-def get_pdf_text_by_page(pdf_path):
-    """Extracts text from PDF and returns a list of (page_number, text) tuples."""
-    path = Path(pdf_path)
-    if not path.exists():
-        return None, "PDF file not found."
-    
-    try:
-        reader = pypdf.PdfReader(path)
-        pages = []
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text:
-                pages.append((i + 1, text))
-        return pages, None
-    except Exception as e:
-        return None, str(e)
+Clinical safety policy:
+Do not diagnose; do not replace national guidelines; encourage clinical judgment.
+Keep responses concise and professional.
+Always include: stewardship note; and cite relevant pages from the provided Context.
+"""
 
-def create_chunks(pages):
-    """
-    Creates chunks of ~CHUNK_SIZE characters with CHUNK_OVERLAP.
-    Tracks which page(s) the chunk belongs to.
-    """
-    chunks = []
-    
-    # Flatten text stream but keep track of page transitions
-    full_text_stream = []
-    for page_num, text in pages:
-        clean_text = text.replace('\n', ' ').strip()
-        full_text_stream.append({"text": clean_text, "page": page_num})
-        
-    # Combine all text while mapping character indices to page numbers
-    combined_text = ""
-    page_map = [] # List of dictionaries: {"start": int, "end": int, "page": int}
-    
-    for entry in full_text_stream:
-        start_index = len(combined_text)
-        combined_text += entry['text'] + " "
-        end_index = len(combined_text)
-        page_map.append({"start": start_index, "end": end_index, "page": entry['page']})
-        
-    # Create Chunks
-    total_len = len(combined_text)
-    step = CHUNK_SIZE - CHUNK_OVERLAP
-    
-    if total_len == 0:
-        return []
+st.set_page_config(page_title="PrescribeWise RAG", page_icon="💊", layout="wide")
+st.title("PrescribeWise; RAG Chat")
+st.caption("Grounded answers from your local WHO knowledge PDF index; requires ingest.py output.")
 
-    for i in range(0, total_len, step):
-        end = min(i + CHUNK_SIZE, total_len)
-        chunk_text = combined_text[i:end]
-        
-        # Find which pages are in this chunk
-        chunk_pages = set()
-        for mapping in page_map:
-            # Check for intersection between chunk range and page range
-            if max(i, mapping['start']) < min(end, mapping['end']):
-                chunk_pages.add(mapping['page'])
-        
-        if not chunk_pages:
-            continue
-
-        sorted_pages = sorted(list(chunk_pages))
-        if len(sorted_pages) == 1:
-            page_ref = f"{sorted_pages[0]}"
-        else:
-            page_ref = f"{sorted_pages[0]}-{sorted_pages[-1]}"
-        
-        if len(chunk_text) > 100: # Skip tiny chunks
-            chunks.append({
-                "text": chunk_text,
-                "page_ref": page_ref
-            })
-            
-    return chunks
+client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 @st.cache_resource
-def load_and_index_pdf(pdf_path, _client):
-    """Loads PDF, chunks it, and creates embeddings (Cached)."""
-    
-    # 1. Load Text
-    pages, error = get_pdf_text_by_page(pdf_path)
-    if error:
-        return None, error
-        
-    # 2. Create Chunks
-    raw_chunks = create_chunks(pages)
-    
-    # 3. Generate Embeddings
-    try:
-        text_list = [c["text"] for c in raw_chunks]
-        embeddings = []
-        
-        # Batching for API reliability
-        batch_size = 100
-        for i in range(0, len(text_list), batch_size):
-            batch = text_list[i : i + batch_size]
-            if not batch: 
-                continue
-            response = _client.embeddings.create(
-                input=batch,
-                model=EMBEDDING_MODEL
-            )
-            embeddings.extend([data.embedding for data in response.data])
-            
-        return {
-            "chunks": raw_chunks,
-            "embeddings": np.array(embeddings)
-        }, None
-        
-    except Exception as e:
-        return None, str(e)
+def load_index_and_meta():
+    if not os.path.exists(FAISS_PATH) or not os.path.exists(META_PATH):
+        raise FileNotFoundError(
+            "RAG index not found. Run: python ingest.py ; then restart the app."
+        )
 
-def retrieve_context(query, kb, client):
-    """Retrieves top K chunks based on cosine similarity."""
-    if not kb:
-        return []
-        
-    # Embed query
-    response = client.embeddings.create(
-        input=query,
-        model=EMBEDDING_MODEL
-    )
-    query_vec = np.array(response.data[0].embedding)
-    
-    # Calculate Similarity
-    sims = np.dot(kb["embeddings"], query_vec)
-    
-    # Get Top K
-    k = min(TOP_K_CHUNKS, len(kb["chunks"]))
-    top_indices = np.argsort(sims)[-k:][::-1]
-    
+    index = faiss.read_index(FAISS_PATH)
+
+    meta = []
+    with open(META_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            meta.append(json.loads(line))
+
+    return index, meta
+
+def embed_query(q: str) -> np.ndarray:
+    resp = client.embeddings.create(model=EMBED_MODEL, input=[q])
+    v = np.array(resp.data[0].embedding, dtype="float32").reshape(1, -1)
+    faiss.normalize_L2(v)
+    return v
+
+def retrieve(q: str, k: int = TOP_K):
+    index, meta = load_index_and_meta()
+    v = embed_query(q)
+    scores, ids = index.search(v, k)
+
     results = []
-    for idx in top_indices:
-        results.append(kb["chunks"][idx])
-        
+    for score, idx in zip(scores[0], ids[0]):
+        if idx == -1:
+            continue
+        r = meta[int(idx)]
+        results.append({"score": float(score), "page": r["page"], "text": r["text"]})
     return results
 
-# ================================
-# UI COMPONENTS
-# ================================
+def build_context(passages) -> str:
+    blocks = []
+    for i, p in enumerate(passages, start=1):
+        blocks.append(f"Excerpt {i}; page {p['page']}; relevance {p['score']:.3f}\n{p['text']}")
+    return "\n\n".join(blocks)
 
-def render_header():
-    st.markdown("""
-    <div class="header-container">
-        <div class="header-title">💡 PrescribeWise</div>
-        <div class="header-subtitle">Health Worker Assistant • WHO AWaRe Book (2022)</div>
-    </div>
-    """, unsafe_allow_html=True)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-def render_simplified_intro():
-    st.markdown("""
-    <div class="info-box">
-        <h4 style="margin-top:0; color: #0051A5;">👋 Welcome to PrescribeWise</h4>
-        <p style="font-size:1.1em;">
-            Your AI assistant for appropriate antibiotic prescribing and stewardship. 
-            Based exclusively on the <strong>WHO AWaRe Antibiotic Book (2022)</strong>.
-        </p>
-        <ul style="margin-bottom:0;">
-            <li><strong>🟢 Access:</strong> First-line, lower resistance potential.</li>
-            <li><strong>🟡 Watch:</strong> Key targets for stewardship actions.</li>
-            <li><strong>🔴 Reserve:</strong> Last-resort options for MDR organisms.</li>
-        </ul>
-    </div>
-    
-    <div class="disclaimer-box">
-        <strong>⚠️ IMPORTANT DISCLAIMER:</strong><br>
-        This tool is for <strong>educational purposes only</strong> for healthcare professionals. 
-        It is NOT a substitute for professional clinical judgment. Always refer to official local 
-        guidelines and consider individual patient factors.
-    </div>
-    """, unsafe_allow_html=True)
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
-# ================================
-# MAIN APP
-# ================================
-def main():
-    load_css()
-    
-    # -- Init Session --
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # -- Auth & Setup --
-    if "OPENAI_API_KEY" not in st.secrets:
-        st.error("🚨 OpenAI API Key missing.")
-        st.stop()
-        
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    
-    # -- Load Knowledge Base --
-    with st.spinner("Loading WHO Guidelines..."):
-        kb, error = load_and_index_pdf("WHOAMR.pdf", client)
+user_input = st.chat_input("Ask a question; include patient group; severity; allergies; pregnancy status if relevant.")
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-    # -- UI Layout --
-    render_header()
-    
-    # Sidebar (Clean - No Settings)
-    with st.sidebar:
-        st.image("https://cdn-icons-png.flaticon.com/512/3063/3063176.png", width=80)
-        st.markdown("### 🟢 AWaRe Classification")
-        st.markdown("""
-        **Access:** First choice
-        **Watch:** Second choice
-        **Reserve:** Last resort
-        """)
-        st.divider()
-        if st.button("🔄 New Consultation", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
-            
-    # Main Content
-    if error:
-        st.error(f"❌ Error loading knowledge base: {error}")
-    elif not kb:
-        st.warning("⚠️ 'WHOAMR.pdf' not found. Please upload the document.")
-    else:
-        # Show toast safely (once per load)
-        if "kb_loaded" not in st.session_state:
-            st.toast(f"Knowledge Base Loaded: {len(kb['chunks'])} sections indexed.", icon="📚")
-            st.session_state.kb_loaded = True
+    passages = retrieve(user_input, TOP_K)
+    context = build_context(passages)
 
-        # Show intro/disclaimer only if chat is empty
-        if not st.session_state.messages:
-            render_simplified_intro()
+    with st.chat_message("assistant"):
+        with st.spinner("Retrieving sources; generating grounded guidance..."):
+            resp = client.chat.completions.create(
+                model=CHAT_MODEL,
+                temperature=0.2,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{user_input}"}
+                ],
+            )
+            answer = resp.choices[0].message.content
+            st.markdown(answer)
 
-        # -- Chat History --
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                
-        # -- Chat Input --
-        if prompt := st.chat_input("Ex: Treatment for pneumonia in children?"):
-            
-            # 1. User Message
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-                
-            # 2. Retrieval
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                status = st.status("🔍 Searching guidelines...", expanded=False)
-                
-                context_chunks = retrieve_context(prompt, kb, client)
-                
-                # Format context for LLM
-                context_str = "\n\n".join(
-                    [f"--- [SOURCE: Pages {c['page_ref']}] ---\n{c['text']}" for c in context_chunks]
-                )
-                
-                status.write(f"Found {len(context_chunks)} relevant sections.")
-                status.update(label="✅ Search Complete", state="complete")
-                
-                # 3. Generation
-                system_prompt = f"""
-You are PrescribeWise, a clinical assistant based on the WHO AWaRe Antibiotic Book (2022).
+            with st.expander("Sources used"):
+                for p in passages:
+                    st.markdown(f"Page {p['page']}; score {p['score']:.3f}")
+                    st.write(p["text"])
 
-INSTRUCTIONS:
-1. Use the provided CONTEXT to answer.
-2. CITATIONS: You MUST cite the page numbers provided in the text markers (e.g., [Pages 45-46]).
-3. CLASSIFY: Always label antibiotics as Access (🟢), Watch (🟡), or Reserve (🔴) if mentioned.
-4. If the answer is not in the context, state "I cannot find this information in the WHO guidelines."
-5. Be concise, professional, and use bullet points for readability.
-
-CONTEXT:
-{context_str}
-"""
-                
-                full_response = ""
-                try:
-                    stream = client.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt}
-                        ],
-                        stream=True,
-                        temperature=0.3
-                    )
-                    
-                    for chunk in stream:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            full_response += content
-                            message_placeholder.markdown(full_response + "▌")
-                            
-                    message_placeholder.markdown(full_response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-                    
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-if __name__ == "__main__":
-    main()
+    st.session_state.messages.append({"role": "assistant", "content": answer})
