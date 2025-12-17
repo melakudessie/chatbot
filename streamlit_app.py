@@ -1,7 +1,7 @@
 """
-WHO Antibiotics Use Support Chatbot
+WHO Antibiotics Use Support Chatbot - WITH LOGO IMAGE
 A professional Streamlit chatbot for WHO antibiotic resistance guidelines
-Version: 2.0
+Version: 2.0 - Professional Edition with Logo
 """
 
 import streamlit as st
@@ -25,79 +25,105 @@ st.set_page_config(
 )
 
 # ================================
+# LOGO HELPER FUNCTION
+# ================================
+def get_logo_base64():
+    """Convert logo to base64 for embedding"""
+    logo_path = Path("logo.png")
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            data = f.read()
+            return base64.b64encode(data).decode()
+    return None
+
+# ================================
 # CUSTOM CSS STYLING
 # ================================
 st.markdown("""
 <style>
-    /* Main title styling */
-    .main-title {
-        text-align: center;
-        color: #0051A5;
-        font-size: 2.5em;
-        font-weight: bold;
-        margin-bottom: 0;
-        padding: 20px;
-    }
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     
-    /* Subtitle styling */
-    .subtitle {
-        text-align: center;
-        color: #666;
-        font-size: 1.2em;
-        margin-top: 0;
-        margin-bottom: 20px;
+    /* Main container */
+    .main {
+        padding-top: 2rem;
     }
     
     /* Header container */
     .header-container {
         background: linear-gradient(135deg, #0051A5 0%, #00A3DD 100%);
-        padding: 30px;
-        border-radius: 10px;
+        padding: 40px 30px;
+        border-radius: 15px;
         margin-bottom: 30px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        text-align: center;
+    }
+    
+    .logo-img {
+        width: 150px;
+        height: 150px;
+        margin: 0 auto 20px;
+        display: block;
+        border-radius: 50%;
+        border: 5px solid white;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
     }
     
     .header-title {
         color: white;
         font-size: 2.8em;
         font-weight: bold;
-        margin: 0;
-        text-align: center;
+        margin: 10px 0;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
     }
     
     .header-subtitle {
         color: #E0F2FF;
         font-size: 1.3em;
-        text-align: center;
         margin-top: 10px;
+        font-weight: 300;
     }
     
     /* Description box */
     .description-box {
         background-color: #F8F9FA;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #0051A5;
+        padding: 25px;
+        border-radius: 12px;
+        border-left: 6px solid #0051A5;
         margin: 20px 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* Warning/Disclaimer box */
+    .description-box h3 {
+        color: #0051A5;
+        margin-top: 0;
+        font-size: 1.5em;
+    }
+    
+    /* Disclaimer box */
     .disclaimer-box {
         background-color: #FFF3CD;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #FFC107;
+        padding: 25px;
+        border-radius: 12px;
+        border-left: 6px solid #FFC107;
         margin: 20px 0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .disclaimer-box h3 {
+        color: #856404;
+        margin-top: 0;
+        font-size: 1.5em;
     }
     
     /* Feature cards */
     .feature-card {
-        background-color: white;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
         padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-radius: 12px;
         margin: 10px 0;
-        border-left: 4px solid #0051A5;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
     /* Sidebar styling */
@@ -106,23 +132,58 @@ st.markdown("""
         font-size: 1.5em;
         font-weight: bold;
         margin-bottom: 15px;
+        text-align: center;
     }
     
-    /* Chat message styling */
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #0051A5 0%, #00A3DD 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-weight: 600;
+        transition: all 0.3s;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,81,165,0.4);
+    }
+    
+    /* Chat messages */
     .stChatMessage {
         background-color: #F8F9FA;
-        border-radius: 10px;
+        border-radius: 12px;
         padding: 15px;
         margin: 10px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     
     /* Footer */
     .footer {
         text-align: center;
         color: #666;
-        padding: 20px;
+        padding: 30px;
         margin-top: 50px;
-        border-top: 1px solid #E0E0E0;
+        border-top: 2px solid #E0E0E0;
+        background-color: #F8F9FA;
+        border-radius: 10px;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background-color: #F0F2F6;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    
+    /* Metric styling */
+    .stMetric {
+        background-color: #F8F9FA;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #0051A5;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -133,16 +194,26 @@ st.markdown("""
 def create_header():
     """Create professional header with logo and title"""
     
-    # Using WHO colors and medical emoji as logo
-    st.markdown("""
-    <div class="header-container">
-        <div style="text-align: center; font-size: 4em; margin-bottom: 10px;">
-            💊 🏥 🌍
+    logo_base64 = get_logo_base64()
+    
+    if logo_base64:
+        # With custom logo
+        st.markdown(f"""
+        <div class="header-container">
+            <img src="data:image/png;base64,{logo_base64}" class="logo-img" alt="WHO Logo">
+            <h1 class="header-title">WHO Antibiotics Support Chatbot</h1>
+            <p class="header-subtitle">Evidence-Based Guidance on Antimicrobial Stewardship</p>
         </div>
-        <h1 class="header-title">WHO Antibiotics Support Chatbot</h1>
-        <p class="header-subtitle">Evidence-Based Guidance on Antimicrobial Stewardship</p>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    else:
+        # Without logo (fallback to emojis)
+        st.markdown("""
+        <div class="header-container">
+            <div style="font-size: 4em; margin-bottom: 10px;">💊 🏥 🌍</div>
+            <h1 class="header-title">WHO Antibiotics Support Chatbot</h1>
+            <p class="header-subtitle">Evidence-Based Guidance on Antimicrobial Stewardship</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ================================
 # DESCRIPTION SECTION
@@ -152,19 +223,26 @@ def show_description():
     
     st.markdown("""
     <div class="description-box">
-        <h3 style="color: #0051A5; margin-top: 0;">📖 About This Chatbot</h3>
-        <p style="font-size: 1.1em; line-height: 1.6;">
-            This AI-powered chatbot provides comprehensive information based on 
-            <strong>World Health Organization (WHO)</strong> guidelines for antibiotic use and 
-            antimicrobial resistance. Get evidence-based answers about:
+        <h3>📖 About This Chatbot</h3>
+        <p style="font-size: 1.1em; line-height: 1.8;">
+            This AI-powered assistant provides comprehensive, evidence-based information on antibiotic use 
+            and antimicrobial resistance based on <strong>World Health Organization (WHO)</strong> guidelines.
         </p>
-        <ul style="font-size: 1.05em; line-height: 1.8;">
-            <li>🔹 <strong>Antibiotic Treatment Guidelines</strong> - First-line and alternative therapies</li>
-            <li>🔹 <strong>WHO AWaRe Classification</strong> - Access, Watch, and Reserve categories</li>
-            <li>🔹 <strong>Antimicrobial Resistance</strong> - Prevention and management strategies</li>
-            <li>🔹 <strong>Dosing & Duration</strong> - Age-specific recommendations and safety</li>
-            <li>🔹 <strong>Antimicrobial Stewardship</strong> - Best practices for responsible use</li>
+        <h4 style="color: #0051A5; margin-top: 20px;">What You Can Learn:</h4>
+        <ul style="font-size: 1.05em; line-height: 2;">
+            <li>🔹 <strong>Treatment Guidelines</strong> - First-line and alternative antibiotic therapies for various infections</li>
+            <li>🔹 <strong>WHO AWaRe Classification</strong> - Understanding Access, Watch, and Reserve antibiotic categories</li>
+            <li>🔹 <strong>Resistance Patterns</strong> - Current antimicrobial resistance trends and prevention strategies</li>
+            <li>🔹 <strong>Dosing Information</strong> - Age-specific recommendations, dosages, and treatment duration</li>
+            <li>🔹 <strong>Safety Guidelines</strong> - Contraindications, side effects, and important precautions</li>
+            <li>🔹 <strong>Stewardship Best Practices</strong> - Responsible antibiotic use and prescribing practices</li>
         </ul>
+        <div style="background-color: #E3F2FD; padding: 15px; border-radius: 8px; margin-top: 20px;">
+            <p style="margin: 0; color: #1565C0; font-weight: 600;">
+                💡 <strong>Pro Tip:</strong> Ask detailed questions for comprehensive answers including dosing, 
+                duration, alternatives, and safety considerations!
+            </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -176,21 +254,33 @@ def show_disclaimer():
     
     st.markdown("""
     <div class="disclaimer-box">
-        <h3 style="color: #856404; margin-top: 0;">⚠️ Important Medical Disclaimer</h3>
-        <p style="font-size: 1.05em; line-height: 1.6; color: #856404;">
-            <strong>This chatbot is for informational and educational purposes only.</strong>
+        <h3>⚠️ Important Medical Disclaimer</h3>
+        <p style="font-size: 1.1em; line-height: 1.6; color: #856404; font-weight: 600;">
+            This chatbot is for <strong>INFORMATIONAL and EDUCATIONAL purposes ONLY</strong>
         </p>
+        
+        <h4 style="color: #856404; margin-top: 20px;">❌ This Chatbot Does NOT:</h4>
         <ul style="font-size: 1em; line-height: 1.8; color: #856404;">
-            <li>❌ This is NOT a substitute for professional medical advice, diagnosis, or treatment</li>
-            <li>❌ Always consult qualified healthcare professionals for medical decisions</li>
-            <li>❌ Do NOT use this information for self-diagnosis or self-medication</li>
-            <li>❌ In case of medical emergency, contact emergency services immediately</li>
-            <li>✅ This chatbot provides general WHO guideline information only</li>
-            <li>✅ Individual patient care requires personalized clinical assessment</li>
+            <li>Replace professional medical advice, diagnosis, or treatment</li>
+            <li>Provide patient-specific medical recommendations</li>
+            <li>Authorize prescription or medication changes</li>
+            <li>Offer emergency medical guidance</li>
         </ul>
-        <p style="font-size: 1em; margin-top: 15px; color: #856404;">
-            <strong>By using this chatbot, you acknowledge that you have read and understood this disclaimer.</strong>
-        </p>
+        
+        <h4 style="color: #856404; margin-top: 20px;">✅ You MUST:</h4>
+        <ul style="font-size: 1em; line-height: 1.8; color: #856404;">
+            <li><strong>Always consult qualified healthcare professionals</strong> for medical decisions</li>
+            <li><strong>Seek immediate medical attention</strong> for emergencies</li>
+            <li><strong>Follow your doctor's prescriptions</strong> and treatment plans</li>
+            <li><strong>Report adverse reactions</strong> to your healthcare provider</li>
+        </ul>
+        
+        <div style="background-color: #FFF; padding: 15px; border-radius: 8px; margin-top: 20px; border: 2px solid #856404;">
+            <p style="margin: 0; color: #856404; font-weight: 700; text-align: center;">
+                ⚕️ By using this chatbot, you acknowledge that you understand this disclaimer 
+                and will consult healthcare professionals for medical advice.
+            </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -202,49 +292,80 @@ def create_sidebar():
     
     with st.sidebar:
         # Logo in sidebar
-        st.markdown("""
-        <div style="text-align: center; font-size: 3em; margin: 20px 0;">
-            💊
-        </div>
-        """, unsafe_allow_html=True)
+        logo_base64 = get_logo_base64()
+        if logo_base64:
+            st.markdown(f"""
+            <div style="text-align: center; margin: 20px 0;">
+                <img src="data:image/png;base64,{logo_base64}" style="width: 120px; border-radius: 50%; border: 3px solid #0051A5;">
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="text-align: center; font-size: 3em; margin: 20px 0;">
+                💊
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown('<p class="sidebar-header">Quick Navigation</p>', unsafe_allow_html=True)
         
         # Information sections
-        with st.expander("📚 How to Use", expanded=True):
+        with st.expander("📚 How to Use This Bot", expanded=True):
             st.markdown("""
             **Getting Started:**
-            1. Type your question in the chat box below
-            2. Ask about specific antibiotics, infections, or guidelines
-            3. Request detailed information on dosing or resistance patterns
+            1. 💬 Type your question in the chat box
+            2. 📋 Ask about antibiotics, infections, or guidelines
+            3. 📊 Request details on dosing, duration, or alternatives
             
             **Example Questions:**
-            - "What is the first-line treatment for pneumonia in children?"
-            - "Explain the WHO AWaRe classification system"
-            - "What are alternatives to penicillin for allergic patients?"
-            - "How to prevent antibiotic resistance?"
+            - *"First-line treatment for pneumonia in children?"*
+            - *"Explain WHO AWaRe classification"*
+            - *"Alternatives to penicillin for allergies?"*
+            - *"How to prevent antibiotic resistance?"*
+            - *"Dosing for amoxicillin in pediatrics?"*
             """)
         
         with st.expander("🎯 Key Features"):
             st.markdown("""
-            - ✅ Comprehensive, detailed responses
-            - ✅ Evidence-based WHO guidelines
-            - ✅ Age-specific recommendations
-            - ✅ Safety and contraindications
-            - ✅ Antimicrobial stewardship focus
-            - ✅ Real-time streaming responses
+            - ✅ **Comprehensive responses** with detailed explanations
+            - ✅ **Evidence-based** WHO guideline information
+            - ✅ **Age-specific** dosing and recommendations
+            - ✅ **Safety focus** including contraindications
+            - ✅ **Stewardship emphasis** on responsible use
+            - ✅ **Real-time** streaming responses
+            - ✅ **Structured output** for easy reading
             """)
         
-        with st.expander("🌐 WHO AWaRe Groups"):
+        with st.expander("🌐 WHO AWaRe Classification"):
             st.markdown("""
-            **Access Group (Green):**
-            First-line, narrow-spectrum antibiotics
+            **🟢 ACCESS Group:**
+            - First-line, narrow-spectrum
+            - Lower resistance risk
+            - Examples: Amoxicillin, Penicillin
             
-            **Watch Group (Yellow):**
-            Broader spectrum, higher resistance risk
+            **🟡 WATCH Group:**
+            - Broader spectrum antibiotics
+            - Higher resistance potential
+            - Examples: Ciprofloxacin, Ceftriaxone
             
-            **Reserve Group (Red):**
-            Last-resort antibiotics for specific cases
+            **🔴 RESERVE Group:**
+            - Last-resort antibiotics
+            - Highest resistance concern
+            - Examples: Colistin, Linezolid
+            """)
+        
+        with st.expander("⚕️ When to Seek Medical Help"):
+            st.markdown("""
+            **🚨 Immediate Emergency:**
+            - Difficulty breathing
+            - Severe allergic reaction
+            - Loss of consciousness
+            - Severe pain
+            
+            **⚠️ Consult Doctor:**
+            - Starting new antibiotics
+            - Side effects or reactions
+            - Symptoms not improving
+            - Questions about treatment
             """)
         
         st.divider()
@@ -253,7 +374,12 @@ def create_sidebar():
         st.markdown("### 📊 Session Statistics")
         if "messages" in st.session_state:
             message_count = len([m for m in st.session_state.messages if m["role"] != "system"])
-            st.metric("Total Messages", message_count)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Messages", message_count)
+            with col2:
+                user_msgs = len([m for m in st.session_state.messages if m["role"] == "user"])
+                st.metric("Questions", user_msgs)
         else:
             st.metric("Total Messages", 0)
         
@@ -263,17 +389,22 @@ def create_sidebar():
         if st.button("🗑️ Clear Chat History", use_container_width=True):
             st.session_state.messages = []
             st.session_state.display_messages = []
+            st.session_state.show_info = True
             st.rerun()
         
         st.divider()
         
         # Footer links
         st.markdown("""
-        ### 🔗 Useful Resources
-        - [WHO Antimicrobial Resistance](https://www.who.int/health-topics/antimicrobial-resistance)
-        - [WHO AWaRe Classification](https://www.who.int/publications/i/item/2021-aware-classification)
-        - [WHO Essential Medicines](https://www.who.int/groups/expert-committee-on-selection-and-use-of-essential-medicines)
+        ### 🔗 WHO Resources
+        - [WHO AMR Portal](https://www.who.int/health-topics/antimicrobial-resistance)
+        - [AWaRe Database](https://www.who.int/publications/i/item/2021-aware-classification)
+        - [Essential Medicines List](https://www.who.int/groups/expert-committee-on-selection-and-use-of-essential-medicines)
+        - [Global Action Plan](https://www.who.int/publications/i/item/9789241509763)
         """)
+        
+        st.markdown("---")
+        st.caption("💊 Version 2.0 Professional")
 
 # ================================
 # API KEY CHECK
@@ -322,7 +453,7 @@ Your role is to provide COMPREHENSIVE, DETAILED, and evidence-based information 
 When answering questions, you should:
 
 1. **Be thorough and detailed**: Provide comprehensive explanations with multiple relevant points
-2. **Structure your responses**: Use clear organization with headings, sections, and bullet points
+2. **Structure your responses**: Use clear organization with headings, sections, and bullet points for readability
 3. **Include specific information**: Mention specific antibiotics, dosages (when appropriate), duration of treatment, and age-specific recommendations
 4. **Reference guidelines**: Cite WHO guidelines, AWaRe classification, and evidence-based practices
 5. **Provide context**: Explain the reasoning behind recommendations and the importance of following guidelines
@@ -330,7 +461,12 @@ When answering questions, you should:
 7. **Address safety**: Include contraindications, side effects, and important safety considerations when relevant
 8. **Emphasize antimicrobial stewardship**: Highlight the importance of appropriate antibiotic use and resistance prevention
 
-Format your responses with clear headings and organized sections for easy reading. Use markdown formatting for better presentation.
+Format your responses with clear markdown formatting:
+- Use ## for main headings
+- Use ### for subheadings
+- Use bullet points for lists
+- Use **bold** for emphasis
+- Organize information logically
 
 Always maintain accuracy and emphasize that users should consult healthcare professionals for specific medical advice and treatment decisions."""
         }
@@ -354,13 +490,19 @@ create_sidebar()
 
 # Show description and disclaimer on first load
 if st.session_state.show_info:
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([4, 1])
     with col1:
         show_description()
         show_disclaimer()
     with col2:
-        if st.button("✅ I Understand - Start Chatting", use_container_width=True):
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if st.button("✅ I Understand\n\nStart Chatting →", use_container_width=True):
             st.session_state.show_info = False
+            st.rerun()
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔄 Reset to\n\nView Info", use_container_width=True):
+            st.session_state.show_info = True
             st.rerun()
     
     st.stop()
@@ -369,13 +511,30 @@ if st.session_state.show_info:
 # CHAT INTERFACE
 # ================================
 
+# Quick action buttons above chat
+st.markdown("### 💬 Chat Interface")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    if st.button("📖 View Info Again"):
+        st.session_state.show_info = True
+        st.rerun()
+with col2:
+    if st.button("🔄 New Conversation"):
+        st.session_state.display_messages = []
+        st.rerun()
+
+st.markdown("---")
+
 # Display chat messages
+if not st.session_state.display_messages:
+    st.info("👋 Welcome! Ask me anything about WHO antibiotic guidelines, treatment recommendations, or antimicrobial resistance.")
+
 for message in st.session_state.display_messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # Chat input
-if prompt := st.chat_input("💬 Ask me about WHO antibiotic guidelines, resistance patterns, or treatment recommendations..."):
+if prompt := st.chat_input("💬 Ask about antibiotics, infections, WHO guidelines, resistance patterns, or treatment recommendations..."):
     # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -411,7 +570,7 @@ if prompt := st.chat_input("💬 Ask me about WHO antibiotic guidelines, resista
             message_placeholder.markdown(full_response)
             
         except Exception as e:
-            error_message = f"❌ Error: {str(e)}"
+            error_message = f"❌ Error: {str(e)}\n\nPlease try again or contact support if the issue persists."
             message_placeholder.error(error_message)
             full_response = error_message
     
@@ -422,16 +581,22 @@ if prompt := st.chat_input("💬 Ask me about WHO antibiotic guidelines, resista
 # ================================
 # FOOTER
 # ================================
+st.markdown("---")
 st.markdown("""
 <div class="footer">
-    <p style="font-size: 1.1em; margin-bottom: 10px;">
-        <strong>💊 WHO Antibiotics Support Chatbot</strong>
+    <h3 style="color: #0051A5; margin-bottom: 15px;">💊 WHO Antibiotics Support Chatbot</h3>
+    <p style="font-size: 1.05em; margin-bottom: 10px;">
+        <strong>Powered by OpenAI GPT-3.5</strong> | Based on WHO Guidelines
+    </p>
+    <p style="font-size: 0.95em; color: #666; margin-bottom: 20px;">
+        For Educational and Informational Purposes Only
     </p>
     <p style="font-size: 0.9em; color: #999;">
-        Powered by OpenAI GPT-3.5 | Based on WHO Guidelines | For Educational Purposes Only
+        ⚕️ <strong>Medical Disclaimer:</strong> Always consult healthcare professionals for medical advice, diagnosis, and treatment.<br>
+        This chatbot does not replace professional medical consultation.
     </p>
-    <p style="font-size: 0.85em; color: #999; margin-top: 10px;">
-        © 2024 | Always Consult Healthcare Professionals for Medical Decisions
+    <p style="font-size: 0.85em; color: #999; margin-top: 15px;">
+        © 2024 WHO Antibiotics Support Bot | Version 2.0 Professional Edition
     </p>
 </div>
 """, unsafe_allow_html=True)
