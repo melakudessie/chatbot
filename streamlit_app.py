@@ -355,12 +355,8 @@ def create_sidebar():
             st.markdown("""
             **Responses will cite:**
             
-            1. WHO Model List of Essential Medicines
-            2. WHO AWaRe Classification (2021)
-            3. WHO Guidelines for Management of Common Childhood Illnesses
-            4. WHO Pocket Book of Hospital Care for Children
-            5. WHO Guidelines on Tuberculosis
-            6. Specific condition guidelines
+            1.WHO AWaRe Classification (2021)
+        
             
             *All with publication year and edition*
             """)
