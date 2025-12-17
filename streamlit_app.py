@@ -5,8 +5,9 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
-# --- CHANGED IMPORTS FOR COMPATIBILITY ---
-from langchain.chains import RetrievalQA 
+
+# --- FIX: USE DIRECT IMPORT PATH TO AVOID VERSION CONFLICTS ---
+from langchain.chains.retrieval_qa.base import RetrievalQA
 
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="PrescribeWise Assistant", page_icon="🩺", layout="wide")
@@ -17,19 +18,24 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     api_key = st.text_input("OpenAI API Key", type="password")
     uploaded_file = st.file_uploader("Upload Medical Guidelines (PDF)", type="pdf")
+    st.info("ℹ️ Upload the 'WHOAMR.pdf' to start.")
 
 # --- 3. CACHED DOCUMENT PROCESSING ---
 @st.cache_resource(show_spinner=False)
 def load_and_process_pdf(file, api_key):
+    # Create temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(file.getvalue())
         tmp_path = tmp_file.name
 
     try:
+        # Load and Split
         loader = PyPDFLoader(tmp_path)
         documents = loader.load()
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(documents)
+        
+        # Embed
         embeddings = OpenAIEmbeddings(openai_api_key=api_key)
         vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
         return vectorstore
@@ -37,26 +43,31 @@ def load_and_process_pdf(file, api_key):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-# --- 4. MAIN APP LOGIC ---
-if not api_key or not uploaded_file:
-    st.info("👋 Please enter your API Key and upload a PDF to start.")
+# --- 4. MAIN LOGIC ---
+if not api_key:
+    st.warning("Please enter your OpenAI API Key.")
     st.stop()
 
+if not uploaded_file:
+    st.info("Please upload the PDF document.")
+    st.stop()
+
+# Initialize Chat
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-with st.spinner("Processing document..."):
+# Process PDF
+with st.spinner("Processing PDF... (One-time setup)"):
     try:
         vectorstore = load_and_process_pdf(uploaded_file, api_key)
         retriever = vectorstore.as_retriever()
     except Exception as e:
-        st.error(f"Error processing file: {e}")
+        st.error(f"Error processing PDF: {e}")
         st.stop()
 
-# --- 5. LEGACY CHAIN SETUP (Works on old versions) ---
+# --- 5. SETUP QA CHAIN (Direct Import Fix) ---
 llm = ChatOpenAI(model="gpt-4", openai_api_key=api_key, temperature=0)
 
-# Use RetrievalQA instead of create_retrieval_chain
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
@@ -69,24 +80,28 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if user_input := st.chat_input("Ask about treatment guidelines..."):
+if user_input := st.chat_input("Ask about medical guidelines..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing guidelines..."):
+        with st.spinner("Consulting guidelines..."):
             try:
-                # Legacy invocation method
-                response = qa_chain.invoke({"query": user_input})
-                answer = response["result"] # Note: key is 'result' in legacy chain
+                # 'invoke' is the new standard, but 'run' is safer for older versions
+                # We use __call__ dictionary input for maximum compatibility
+                response = qa_chain({"query": user_input})
+                answer = response["result"]
                 
+                # Show Sources
                 with st.expander("📚 View Source Snippets"):
                     for i, doc in enumerate(response["source_documents"]):
                         page = doc.metadata.get("page", "Unknown")
-                        st.markdown(f"**Page {page}:** {doc.page_content[:200]}...")
+                        st.markdown(f"**Source {i+1} (Page {page}):**")
+                        st.markdown(f"> {doc.page_content[:200]}...")
 
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
+                
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                st.error(f"Error generating response: {e}")
