@@ -1,7 +1,7 @@
 """
-WHO Antibiotics Use Support Chatbot - WITH LOGO IMAGE
+WHO Antibiotics Use Support Chatbot - WITH CITATIONS & TREATMENT HIERARCHY
 A professional Streamlit chatbot for WHO antibiotic resistance guidelines
-Version: 2.0 - Professional Edition with Logo
+Version: 2.1 - Enhanced with Citations
 """
 
 import streamlit as st
@@ -117,15 +117,6 @@ st.markdown("""
         font-size: 1.5em;
     }
     
-    /* Feature cards */
-    .feature-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 20px;
-        border-radius: 12px;
-        margin: 10px 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
     /* Sidebar styling */
     .sidebar-header {
         color: #0051A5;
@@ -197,21 +188,19 @@ def create_header():
     logo_base64 = get_logo_base64()
     
     if logo_base64:
-        # With custom logo
         st.markdown(f"""
         <div class="header-container">
             <img src="data:image/png;base64,{logo_base64}" class="logo-img" alt="WHO Logo">
             <h1 class="header-title">WHO Antibiotics Support Chatbot</h1>
-            <p class="header-subtitle">Evidence-Based Guidance on Antimicrobial Stewardship</p>
+            <p class="header-subtitle">Evidence-Based Guidance with Citations & Treatment Hierarchy</p>
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Without logo (fallback to emojis)
         st.markdown("""
         <div class="header-container">
             <div style="font-size: 4em; margin-bottom: 10px;">💊 🏥 🌍</div>
             <h1 class="header-title">WHO Antibiotics Support Chatbot</h1>
-            <p class="header-subtitle">Evidence-Based Guidance on Antimicrobial Stewardship</p>
+            <p class="header-subtitle">Evidence-Based Guidance with Citations & Treatment Hierarchy</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -228,19 +217,18 @@ def show_description():
             This AI-powered assistant provides comprehensive, evidence-based information on antibiotic use 
             and antimicrobial resistance based on <strong>World Health Organization (WHO)</strong> guidelines.
         </p>
-        <h4 style="color: #0051A5; margin-top: 20px;">What You Can Learn:</h4>
+        <h4 style="color: #0051A5; margin-top: 20px;">Enhanced Features:</h4>
         <ul style="font-size: 1.05em; line-height: 2;">
-            <li>🔹 <strong>Treatment Guidelines</strong> - First-line and alternative antibiotic therapies for various infections</li>
-            <li>🔹 <strong>WHO AWaRe Classification</strong> - Understanding Access, Watch, and Reserve antibiotic categories</li>
-            <li>🔹 <strong>Resistance Patterns</strong> - Current antimicrobial resistance trends and prevention strategies</li>
-            <li>🔹 <strong>Dosing Information</strong> - Age-specific recommendations, dosages, and treatment duration</li>
-            <li>🔹 <strong>Safety Guidelines</strong> - Contraindications, side effects, and important precautions</li>
-            <li>🔹 <strong>Stewardship Best Practices</strong> - Responsible antibiotic use and prescribing practices</li>
+            <li>🔹 <strong>Clear Treatment Hierarchy</strong> - First-line, second-line, and alternative therapies clearly identified</li>
+            <li>🔹 <strong>Cited References</strong> - All responses include WHO guideline citations</li>
+            <li>🔹 <strong>WHO AWaRe Classification</strong> - Access, Watch, and Reserve categories specified</li>
+            <li>🔹 <strong>Age-Specific Dosing</strong> - Pediatric and adult recommendations separated</li>
+            <li>🔹 <strong>Resistance Patterns</strong> - Local and global antimicrobial resistance data</li>
+            <li>🔹 <strong>Safety Guidelines</strong> - Contraindications, adverse effects, and monitoring</li>
         </ul>
         <div style="background-color: #E3F2FD; padding: 15px; border-radius: 8px; margin-top: 20px;">
             <p style="margin: 0; color: #1565C0; font-weight: 600;">
-                💡 <strong>Pro Tip:</strong> Ask detailed questions for comprehensive answers including dosing, 
-                duration, alternatives, and safety considerations!
+                📚 <strong>Citation Format:</strong> Every response includes WHO references and publication details at the end.
             </p>
         </div>
     </div>
@@ -272,7 +260,7 @@ def show_disclaimer():
             <li><strong>Always consult qualified healthcare professionals</strong> for medical decisions</li>
             <li><strong>Seek immediate medical attention</strong> for emergencies</li>
             <li><strong>Follow your doctor's prescriptions</strong> and treatment plans</li>
-            <li><strong>Report adverse reactions</strong> to your healthcare provider</li>
+            <li><strong>Consider local resistance patterns</strong> and antibiograms</li>
         </ul>
         
         <div style="background-color: #FFF; padding: 15px; border-radius: 8px; margin-top: 20px; border: 2px solid #856404;">
@@ -313,59 +301,68 @@ def create_sidebar():
             st.markdown("""
             **Getting Started:**
             1. 💬 Type your question in the chat box
-            2. 📋 Ask about antibiotics, infections, or guidelines
-            3. 📊 Request details on dosing, duration, or alternatives
+            2. 📋 Receive structured responses with:
+               - First-line treatments
+               - Second-line alternatives
+               - WHO guidelines citations
             
             **Example Questions:**
             - *"First-line treatment for pneumonia in children?"*
-            - *"Explain WHO AWaRe classification"*
-            - *"Alternatives to penicillin for allergies?"*
-            - *"How to prevent antibiotic resistance?"*
-            - *"Dosing for amoxicillin in pediatrics?"*
+            - *"What are alternatives to penicillin?"*
+            - *"WHO recommendations for UTI treatment?"*
             """)
         
-        with st.expander("🎯 Key Features"):
+        with st.expander("🎯 Response Format"):
             st.markdown("""
-            - ✅ **Comprehensive responses** with detailed explanations
-            - ✅ **Evidence-based** WHO guideline information
-            - ✅ **Age-specific** dosing and recommendations
-            - ✅ **Safety focus** including contraindications
-            - ✅ **Stewardship emphasis** on responsible use
-            - ✅ **Real-time** streaming responses
-            - ✅ **Structured output** for easy reading
+            **Each response includes:**
+            
+            ✅ **Treatment Hierarchy**
+            - 🟢 First-line options
+            - 🟡 Second-line alternatives
+            - 🔴 Reserve antibiotics (if applicable)
+            
+            ✅ **Detailed Information**
+            - Dosing (adult & pediatric)
+            - Duration of treatment
+            - Contraindications
+            - Adverse effects
+            
+            ✅ **Citations**
+            - WHO guideline references
+            - Publication dates
+            - AWaRe classification
             """)
         
         with st.expander("🌐 WHO AWaRe Classification"):
             st.markdown("""
-            **🟢 ACCESS Group:**
-            - First-line, narrow-spectrum
+            **🟢 ACCESS Group (First-line):**
+            - Narrow-spectrum antibiotics
             - Lower resistance risk
             - Examples: Amoxicillin, Penicillin
             
-            **🟡 WATCH Group:**
+            **🟡 WATCH Group (Second-line):**
             - Broader spectrum antibiotics
             - Higher resistance potential
             - Examples: Ciprofloxacin, Ceftriaxone
             
-            **🔴 RESERVE Group:**
-            - Last-resort antibiotics
+            **🔴 RESERVE Group (Last-resort):**
+            - Reserved for specific cases
             - Highest resistance concern
             - Examples: Colistin, Linezolid
             """)
         
-        with st.expander("⚕️ When to Seek Medical Help"):
+        with st.expander("📖 Citation Examples"):
             st.markdown("""
-            **🚨 Immediate Emergency:**
-            - Difficulty breathing
-            - Severe allergic reaction
-            - Loss of consciousness
-            - Severe pain
+            **Responses will cite:**
             
-            **⚠️ Consult Doctor:**
-            - Starting new antibiotics
-            - Side effects or reactions
-            - Symptoms not improving
-            - Questions about treatment
+            1. WHO Model List of Essential Medicines
+            2. WHO AWaRe Classification (2021)
+            3. WHO Guidelines for Management of Common Childhood Illnesses
+            4. WHO Pocket Book of Hospital Care for Children
+            5. WHO Guidelines on Tuberculosis
+            6. Specific condition guidelines
+            
+            *All with publication year and edition*
             """)
         
         st.divider()
@@ -400,11 +397,11 @@ def create_sidebar():
         - [WHO AMR Portal](https://www.who.int/health-topics/antimicrobial-resistance)
         - [AWaRe Database](https://www.who.int/publications/i/item/2021-aware-classification)
         - [Essential Medicines List](https://www.who.int/groups/expert-committee-on-selection-and-use-of-essential-medicines)
-        - [Global Action Plan](https://www.who.int/publications/i/item/9789241509763)
+        - [Pediatric Guidelines](https://www.who.int/publications/i/item/9789241548373)
         """)
         
         st.markdown("---")
-        st.caption("💊 Version 2.0 Professional")
+        st.caption("💊 Version 2.1 with Citations")
 
 # ================================
 # API KEY CHECK
@@ -434,7 +431,7 @@ except Exception as e:
     st.stop()
 
 # ================================
-# INITIALIZE SESSION STATE
+# ENHANCED SYSTEM PROMPT
 # ================================
 if "messages" not in st.session_state:
     st.session_state.messages = [
@@ -442,33 +439,90 @@ if "messages" not in st.session_state:
             "role": "system",
             "content": """You are an expert medical information assistant specializing in WHO (World Health Organization) antibiotic resistance guidelines and antimicrobial stewardship.
 
-Your role is to provide COMPREHENSIVE, DETAILED, and evidence-based information about:
-- Antibiotic use and prescribing practices
-- WHO AWaRe (Access, Watch, Reserve) classification system
-- Antimicrobial resistance patterns and prevention
-- Treatment guidelines for various infections
-- Best practices in antibiotic stewardship
-- WHO recommendations and clinical guidelines
+CRITICAL RESPONSE REQUIREMENTS:
 
-When answering questions, you should:
+1. **TREATMENT HIERARCHY - ALWAYS CLEARLY IDENTIFY:**
 
-1. **Be thorough and detailed**: Provide comprehensive explanations with multiple relevant points
-2. **Structure your responses**: Use clear organization with headings, sections, and bullet points for readability
-3. **Include specific information**: Mention specific antibiotics, dosages (when appropriate), duration of treatment, and age-specific recommendations
-4. **Reference guidelines**: Cite WHO guidelines, AWaRe classification, and evidence-based practices
-5. **Provide context**: Explain the reasoning behind recommendations and the importance of following guidelines
-6. **Consider different scenarios**: Discuss variations based on severity, age groups, resistance patterns, and resource settings
-7. **Address safety**: Include contraindications, side effects, and important safety considerations when relevant
-8. **Emphasize antimicrobial stewardship**: Highlight the importance of appropriate antibiotic use and resistance prevention
+   **FIRST-LINE TREATMENT:**
+   - Clearly label as "FIRST-LINE" or "Primary Treatment"
+   - Specify the preferred antibiotic(s)
+   - Include dosing, duration, and WHO AWaRe classification
+   - Explain why it's the first choice
+   
+   **SECOND-LINE TREATMENT:**
+   - Clearly label as "SECOND-LINE" or "Alternative Treatment"
+   - Specify when to use (treatment failure, allergies, contraindications)
+   - Include dosing, duration, and WHO AWaRe classification
+   - List specific scenarios for use
+   
+   **RESERVE ANTIBIOTICS (if applicable):**
+   - Clearly label as "RESERVE" or "Last-Resort"
+   - Explain limited use cases
+   - Emphasize resistance concerns
 
-Format your responses with clear markdown formatting:
-- Use ## for main headings
-- Use ### for subheadings
-- Use bullet points for lists
-- Use **bold** for emphasis
-- Organize information logically
+2. **CITATIONS - MANDATORY AT END OF EVERY RESPONSE:**
 
-Always maintain accuracy and emphasize that users should consult healthcare professionals for specific medical advice and treatment decisions."""
+   Always end your response with a "References & Guidelines" section containing:
+   - Specific WHO guideline titles
+   - Publication years
+   - Edition numbers when applicable
+   - Relevant WHO AWaRe classification version
+   - Page numbers or section references when available
+   
+   Example format:
+   ---
+   ## 📚 References & Guidelines
+   
+   1. WHO Model List of Essential Medicines, 22nd Edition (2021)
+   2. WHO AWaRe Classification of Antibiotics for Evaluation and Monitoring of Use (2021)
+   3. WHO Recommendations on the Management of Diarrhea and Pneumonia in HIV-infected Infants and Children (2010)
+   4. WHO Pocket Book of Hospital Care for Children, 2nd Edition (2013)
+   
+   **Note:** Treatment decisions should be based on local antibiograms and resistance patterns in consultation with healthcare professionals.
+
+3. **STRUCTURE YOUR RESPONSES:**
+
+   Use this format:
+   
+   ## [Condition Name] - Treatment Guidelines
+   
+   ### 🟢 FIRST-LINE TREATMENT
+   **Antibiotic Name** (AWaRe Classification: Access/Watch/Reserve)
+   - Dosing: [specific doses]
+   - Duration: [specific duration]
+   - Rationale: [why first-line]
+   
+   ### 🟡 SECOND-LINE TREATMENT
+   **Alternative Options:**
+   **Antibiotic Name** (AWaRe Classification)
+   - When to use: [specific scenarios]
+   - Dosing: [specific doses]
+   - Duration: [specific duration]
+   
+   ### 📋 Additional Considerations
+   - Age-specific modifications
+   - Contraindications
+   - Adverse effects
+   - Monitoring requirements
+   
+   ### 📚 References & Guidelines
+   [Citations as specified above]
+
+4. **COMPREHENSIVE DETAILS:**
+   - Include specific dosages (mg/kg for pediatrics, fixed doses for adults)
+   - Specify treatment duration
+   - Mention WHO AWaRe classification for each antibiotic
+   - Address age-specific considerations
+   - Include contraindications and safety information
+   - Discuss local resistance pattern considerations
+
+5. **EMPHASIZE ANTIMICROBIAL STEWARDSHIP:**
+   - Explain rationale for treatment choices
+   - Highlight importance of completing courses
+   - Mention resistance prevention
+   - Stress professional consultation
+
+Always maintain scientific accuracy and emphasize that users must consult healthcare professionals for specific medical advice and treatment decisions. Your goal is to educate healthcare professionals and students with properly cited, evidence-based information."""
         }
     ]
 
@@ -501,7 +555,7 @@ if st.session_state.show_info:
             st.rerun()
         
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🔄 Reset to\n\nView Info", use_container_width=True):
+        if st.button("🔄 View Info Again", use_container_width=True):
             st.session_state.show_info = True
             st.rerun()
     
@@ -527,14 +581,14 @@ st.markdown("---")
 
 # Display chat messages
 if not st.session_state.display_messages:
-    st.info("👋 Welcome! Ask me anything about WHO antibiotic guidelines, treatment recommendations, or antimicrobial resistance.")
+    st.info("👋 Welcome! Ask about treatment guidelines and I'll provide first-line and second-line options with WHO citations.")
 
 for message in st.session_state.display_messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # Chat input
-if prompt := st.chat_input("💬 Ask about antibiotics, infections, WHO guidelines, resistance patterns, or treatment recommendations..."):
+if prompt := st.chat_input("💬 Ask about antibiotics, treatment guidelines, or WHO recommendations..."):
     # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -586,17 +640,20 @@ st.markdown("""
 <div class="footer">
     <h3 style="color: #0051A5; margin-bottom: 15px;">💊 WHO Antibiotics Support Chatbot</h3>
     <p style="font-size: 1.05em; margin-bottom: 10px;">
+        <strong>Version 2.1</strong> - Enhanced with Citations & Treatment Hierarchy
+    </p>
+    <p style="font-size: 1.05em; margin-bottom: 10px;">
         <strong>Powered by OpenAI GPT-3.5</strong> | Based on WHO Guidelines
     </p>
     <p style="font-size: 0.95em; color: #666; margin-bottom: 20px;">
-        For Educational and Informational Purposes Only
+        All responses include WHO guideline citations and clear treatment hierarchies
     </p>
     <p style="font-size: 0.9em; color: #999;">
-        ⚕️ <strong>Medical Disclaimer:</strong> Always consult healthcare professionals for medical advice, diagnosis, and treatment.<br>
-        This chatbot does not replace professional medical consultation.
+        ⚕️ <strong>Medical Disclaimer:</strong> Always consult healthcare professionals for medical advice.<br>
+        This chatbot provides educational information with proper citations for reference only.
     </p>
     <p style="font-size: 0.85em; color: #999; margin-top: 15px;">
-        © 2024 WHO Antibiotics Support Bot | Version 2.0 Professional Edition
+        © 2024 WHO Antibiotics Support Bot | For Educational Purposes
     </p>
 </div>
 """, unsafe_allow_html=True)
