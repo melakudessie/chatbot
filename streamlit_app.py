@@ -1,94 +1,96 @@
 import streamlit as st
-from langchain_openai import ChatOpenAI
+import tempfile
+import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-import tempfile
-import os
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="PrescribeWise Assistant", layout="wide")
+# --- 1. APP CONFIGURATION ---
+st.set_page_config(page_title="PrescribeWise Assistant", page_icon="🩺", layout="wide")
 st.title("🩺 PrescribeWise: Health Worker Assistant")
 
-# --- SIDEBAR: CONFIGURATION ---
+# --- 2. SIDEBAR SETUP ---
 with st.sidebar:
-    st.header("Settings")
-    # SECURITY: Ideally use st.secrets, but input works for testing
+    st.header("⚙️ Configuration")
+    
+    # Secure API Key Input
     api_key = st.text_input("OpenAI API Key", type="password")
+    if not api_key:
+        st.warning("Please enter your OpenAI API Key to proceed.")
     
-    # Allow user to upload the 700-page PDF
+    # File Uploader
     uploaded_file = st.file_uploader("Upload Medical Guidelines (PDF)", type="pdf")
-    
-    st.info("ℹ️ Note: The first time you upload a large PDF, it may take 1-2 minutes to process.")
+    st.markdown("---")
+    st.markdown("### ℹ️ Instructions")
+    st.markdown("1. Enter your OpenAI API Key.\n2. Upload the **WHOAMR.pdf**.\n3. Wait for the 'Processed' message.\n4. Ask questions about dosages, treatments, etc.")
 
-# --- CACHED FUNCTION FOR PROCESSING PDF ---
-# This is the most critical part. @st.cache_resource ensures we don't 
-# re-process the 700 pages on every single interaction.
+# --- 3. CACHED DOCUMENT PROCESSING FUNCTION ---
+# @st.cache_resource is CRITICAL. It ensures we only process the 700-page PDF ONCE.
+# If you remove this, the app will rebuild the database on every single chat message (very slow).
 @st.cache_resource(show_spinner=False)
-def process_pdf(file, api_key):
-    # Save uploaded file to a temporary location
+def load_and_process_pdf(file, api_key):
+    # Create a temporary file to store the uploaded PDF
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(file.getvalue())
         tmp_path = tmp_file.name
 
     try:
-        # 1. Load PDF
+        # Load the PDF
         loader = PyPDFLoader(tmp_path)
-        docs = loader.load()
+        documents = loader.load()
 
-        # 2. Split Text (Optimized for medical context)
-        # Larger chunk size helps keep medical contexts (dosages/conditions) together
+        # Split text into chunks (optimized for medical texts)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             separators=["\n\n", "\n", ".", " ", ""]
         )
-        splits = text_splitter.split_documents(docs)
+        splits = text_splitter.split_documents(documents)
 
-        # 3. Create Vector Store
-        embeddings = OpenAIEmbeddings(api_key=api_key)
+        # Create Vector Store (FAISS)
+        embeddings = OpenAIEmbeddings(openai_api_key=api_key)
         vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
-        
         return vectorstore
+
     finally:
-        # Cleanup temp file
+        # Clean up the temporary file
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-# --- MAIN APP LOGIC ---
+# --- 4. MAIN APP LOGIC ---
 
-if not api_key:
-    st.warning("Please enter your OpenAI API Key in the sidebar to continue.")
+# Check if API Key and File are present
+if not api_key or not uploaded_file:
+    st.info("👋 Welcome to PrescribeWise. Please configure the sidebar to start.")
     st.stop()
 
-if not uploaded_file:
-    st.warning("Please upload the WHOAMR.pdf file in the sidebar.")
-    st.stop()
-
-# Initialize Chat History
+# Initialize Chat History in Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Process the PDF only when a new file is uploaded
-with st.spinner("Processing medical guidelines... (This happens only once)"):
+# Process PDF (Only runs once due to caching)
+with st.spinner("Processing document... this may take a minute for large files."):
     try:
-        vectorstore = process_pdf(uploaded_file, api_key)
+        vectorstore = load_and_process_pdf(uploaded_file, api_key)
         retriever = vectorstore.as_retriever()
+        st.success("✅ Guidelines loaded successfully!")
     except Exception as e:
-        st.error(f"Error processing PDF: {e}")
+        st.error(f"Error processing file: {e}")
         st.stop()
 
-# --- SYSTEM PROMPT (GUARDRAILS) ---
+# --- 5. DEFINE THE AI CHAIN ---
+
+# System Prompt: Strict medical guardrails
 system_prompt = (
-    "You are a specialized medical assistant called PrescribeWise. "
+    "You are PrescribeWise, a helpful assistant for health workers. "
     "Use the following pieces of retrieved context to answer the question. "
-    "If the answer is not in the context, say 'I do not have this information in the guidelines.' "
-    "Do NOT fabricate dosages or treatments. "
-    "Always cite the source page number if available. "
+    "If the answer is not in the context, clearly state: 'I cannot find this information in the provided guidelines.' "
+    "Do NOT make up dosages or treatments. "
+    "Always cite the page number for every claim (e.g., [Page 12])."
     "\n\n"
     "{context}"
 )
@@ -98,40 +100,42 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
-# Setup RAG Chain
-llm = ChatOpenAI(model="gpt-4o", openai_api_key=api_key, temperature=0) # Low temp for accuracy
+llm = ChatOpenAI(model="gpt-4", openai_api_key=api_key, temperature=0) # Temperature 0 for maximum factual accuracy
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-# --- CHAT INTERFACE ---
+# --- 6. CHAT INTERFACE ---
 
-# Display previous messages
+# Display previous chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# React to user input
-if user_input := st.chat_input("Ask about antibiotic guidelines, dosages, etc..."):
-    # 1. Display user message
+# Handle new user input
+if user_input := st.chat_input("Ask about treatment guidelines (e.g., 'Amikacin dosing for children?')..."):
+    # Display user message
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # 2. Generate and display assistant response
+    # Generate Response
     with st.chat_message("assistant"):
-        with st.spinner("Consulting guidelines..."):
-            response = rag_chain.invoke({"input": user_input})
-            answer = response["answer"]
+        with st.spinner("Analyzing guidelines..."):
+            try:
+                response = rag_chain.invoke({"input": user_input})
+                answer = response["answer"]
+                
+                # OPTIONAL: Add a "Show Sources" expander for transparency
+                with st.expander("📚 View Source Snippets"):
+                    for i, doc in enumerate(response["context"]):
+                        page_num = doc.metadata.get("page", "Unknown")
+                        st.markdown(f"**Source {i+1} (Page {page_num}):**")
+                        st.markdown(f"> {doc.page_content[:300]}...") # Show first 300 chars
+                
+                st.markdown(answer)
+                
+                # Save to history
+                st.session_state.messages.append({"role": "assistant", "content": answer})
             
-            # Optional: Add "Sources" dropdown
-            if "context" in response and response["context"]:
-                sources_text = "\n\n**Sources:**"
-                for doc in response["context"][:3]: # Limit to top 3 sources
-                    page = doc.metadata.get("page", "Unknown")
-                    sources_text += f"\n- Page {page}"
-                answer += sources_text
-
-            st.markdown(answer)
-    
-    # 3. Save assistant response to history
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
