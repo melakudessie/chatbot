@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+from operator import itemgetter  # <--- Newly added for handling multiple inputs
 
 # --- MODERN IMPORTS (STABLE) ---
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -119,6 +120,23 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3063/3063176.png", width=50)
     st.header("App Settings")
     st.divider()
+
+    # --- LANGUAGE SELECTOR ---
+    st.markdown("### 🌐 Language / ቋንቋ")
+    selected_language = st.selectbox(
+        "Choose response language:",
+        [
+            "English", 
+            "Amharic", 
+            "Swahili", 
+            "Oromo", 
+            "French", 
+            "Spanish", 
+            "Arabic", 
+            "Portuguese"
+        ]
+    )
+    st.divider()
     
     st.markdown("### 🚦 AWaRe Color Legend")
     st.markdown(":green[**🟢 First Choice (Access)**]")
@@ -146,20 +164,21 @@ with st.spinner("Initializing medical knowledge base..."):
         st.error(f"Initialization Failed: {e}")
         st.stop()
 
-# --- 7. COLOR-CODED PROMPT ENGINEERING ---
+# --- 7. MULTI-LINGUAL PROMPT ENGINEERING ---
 template = """You are PrescribeWise, an expert medical assistant based on the WHO AWaRe Antibiotic Book.
 
 INSTRUCTIONS:
 1. Answer the question comprehensively using ONLY the context provided below.
-2. **COLOR CODING RULES:** You must use Streamlit Markdown colors for treatment lines:
-   - For **First Choice / Access** antibiotics, format the line like this: :green[**🟢 First Choice:** Drug Name, Dosage, Duration]
-   - For **Second Choice / Watch** antibiotics, format the line like this: :orange[**🟡 Second Choice:** Drug Name, Dosage, Duration]
-   - For **Reserve / Last Resort** antibiotics, format the line like this: :red[**🔴 Reserve:** Drug Name, Dosage, Duration]
+2. **LANGUAGE:** You must answer strictly in **{language}**. Translate all medical advice clearly.
+3. **COLOR CODING RULES:** You must use Streamlit Markdown colors for treatment lines (keep the labels in {language} but apply colors):
+   - For **First Choice / Access** antibiotics, format like: :green[**🟢 First Choice:** Drug Name, Dosage...]
+   - For **Second Choice / Watch** antibiotics, format like: :orange[**🟡 Second Choice:** Drug Name, Dosage...]
+   - For **Reserve / Last Resort** antibiotics, format like: :red[**🔴 Reserve:** Drug Name, Dosage...]
    - For **Comments/Warnings**, use standard text.
 
-3. Include dosages (Adult & Pediatric) and duration if available.
-4. If the answer is not in the context, state: "I cannot find this specific information in the WHO guidelines."
-5. **CITATION:** Cite the page number for every section (e.g., [Page 45]).
+4. Include dosages (Adult & Pediatric) and duration if available.
+5. If the answer is not in the context, state: "I cannot find this specific information in the WHO guidelines" (translated to {language}).
+6. **CITATION:** Cite the page number for every section (e.g., [Page 45]).
 
 CONTEXT:
 {context}
@@ -173,13 +192,6 @@ llm = ChatOpenAI(model="gpt-4", temperature=0, openai_api_key=api_key)
 def format_docs(docs):
     return "\n\n".join(f"[Page {doc.metadata.get('page', '?')}] {doc.page_content}" for doc in docs)
 
-rag_chain = (
-    {"context": retriever | format_docs, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
-
 # --- 8. CHAT INTERFACE ---
 for msg in st.session_state.messages:
     avatar = "👤" if msg["role"] == "user" else "🩺"
@@ -192,31 +204,36 @@ if user_input := st.chat_input("Ex: What is the treatment for acute otitis media
         st.markdown(user_input)
 
     with st.chat_message("assistant", avatar="🩺"):
-        with st.spinner("Consulting WHO guidelines..."):
+        with st.spinner(f"Consulting guidelines ({selected_language})..."):
             try:
-                # Retrieve and Format
+                # 1. Retrieve Context (Context is always English from PDF)
                 relevant_docs = retriever.invoke(user_input)
                 formatted_context = format_docs(relevant_docs)
                 
-                # Stream Response
-                response_container = st.empty()
-                full_response = ""
-                
-                # Chain with manually injected context (to allow streaming + source retrieval)
-                stream_chain = (
-                    {"context": lambda x: formatted_context, "question": RunnablePassthrough()}
+                # 2. Build Chain with Dynamic Language Input
+                rag_chain = (
+                    {
+                        "context": lambda x: formatted_context, 
+                        "question": itemgetter("question"), 
+                        "language": itemgetter("language")
+                    }
                     | prompt 
                     | llm 
                     | StrOutputParser()
                 )
                 
-                for chunk in stream_chain.stream(user_input):
+                # 3. Stream Response
+                response_container = st.empty()
+                full_response = ""
+                
+                # Pass both the question AND the selected language
+                for chunk in rag_chain.stream({"question": user_input, "language": selected_language}):
                     full_response += chunk
                     response_container.markdown(full_response + "▌")
                 
                 response_container.markdown(full_response)
                 
-                # View Evidence Expander
+                # 4. View Evidence Expander
                 with st.expander("🔍 View Clinical Evidence (Source Text)"):
                     for i, doc in enumerate(relevant_docs):
                         st.markdown(f"**Source {i+1} (Page {doc.metadata.get('page', '?')})**")
